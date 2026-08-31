@@ -17,8 +17,7 @@ safety/usefulness breakdown, and the two-sided concealment finding.
 
 This repo tracks the project's own scripts, the generated game files they produce, and the
 visualization pages built from the solved results -- **not** the two C++ solvers this
-project runs on top of. Both are third-party academic code (Karel Horak's HSVI-style POSG
-solvers, one-sided and two-sided) and aren't republished here.
+project runs on top of. Both are academic code and aren't republished here.
 
 - `visualization/` -- static HTML+D3 pages, no backend, each self-contained with its own
   data and explanatory text.
