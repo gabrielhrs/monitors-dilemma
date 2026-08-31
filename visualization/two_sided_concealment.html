@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Two-sided: the value of concealment</title>
+<style>
+  body { margin: 0; padding: 20px; background: #1e1e2e; font-family: monospace; color: #cdd6f4; }
+  .wrap { max-width: 900px; margin: 0 auto; }
+  h1 { font-size: 18px; margin: 0 0 6px; }
+  h2 { font-size: 14px; margin: 26px 0 8px; color: #cdd6f4; }
+  #instructions { font-size: 14px; color: #cdd6f4; margin-bottom: 16px; line-height: 1.5; }
+  #instructions code { color: #a6adc8; }
+  #nav { font-size: 13px; margin-bottom: 14px; }
+  #nav a { color: #89b4fa; text-decoration: none; }
+  #nav a:hover { text-decoration: underline; }
+  #nav .sep { color: #585b70; margin: 0 8px; }
+
+  svg { width: 100%; height: auto; display: block; margin: 10px auto; }
+  .axislabel { font-size: 12px; fill: #a6adc8; }
+  .pointlabel { font-size: 12px; fill: #cdd6f4; }
+  .pointsub { font-size: 10.5px; fill: #6c7086; }
+
+  .caption { font-size: 13px; color: #a6adc8; margin: 10px 0 20px; line-height: 1.55; }
+  .caption b { color: #cdd6f4; }
+  table.data { border-collapse: collapse; font-size: 12.5px; margin: 10px 0 24px; width: 100%; }
+  table.data th, table.data td { border: 1px solid #45475a; padding: 6px 10px; text-align: right; }
+  table.data th:first-child, table.data td:first-child { text-align: left; }
+  table.data th { color: #a6adc8; font-weight: normal; }
+  table.data td.hi { color: #a6e3a1; }
+  table.matrix { border-collapse: collapse; font-size: 13px; margin: 14px auto; }
+  table.matrix th, table.matrix td { border: 1px solid #45475a; padding: 10px 16px; text-align: center; }
+  table.matrix th { color: #a6adc8; font-weight: normal; background: #232338; }
+  table.matrix td.pos { color: #a6e3a1; }
+  table.matrix td.neg { color: #f38ba8; }
+  table.matrix td.zero { color: #cdd6f4; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div id="nav">
+    <b>Toy AI-control demo</b> -- <a href="monitors_dilemma.html">Play the game</a>
+    <span class="sep">|</span><a href="convergence_tree.html">See the solver converge</a>
+    <span class="sep">|</span><a href="strategy_comparison.html">Fixed vs. adaptive strategy</a>
+    <span class="sep">|</span><a href="policy_reconstruction.html">Reconstructed policy</a>
+    <span class="sep">|</span><a href="policy_reconstruction_defer.html">With Defer</a>
+    <span class="sep">|</span><a href="trial_walkthrough.html">One trial, worked example</a>
+    <span class="sep">|</span><a href="attacker_policy.html">Attacker's worst-case strategy</a>
+    <span class="sep">|</span><a href="safety_usefulness.html">Safety vs. usefulness</a>
+    <span class="sep">|</span><a href="two_sided_concealment.html">Two-sided: value of concealment</a>
+  </div>
+  <h1>Two-sided: the value of concealment</h1>
+  <div id="instructions">
+    Every page so far uses a <b>one-sided</b> model: the Schemer sees the Monitor's exact
+    state and action, and only the Monitor is uncertain (about the Schemer's type). A genuinely
+    <b>two-sided</b> model -- solved with a sibling HSVI solver where each player holds a belief
+    over the <i>other's</i> hidden state -- lets the Schemer's view of the Monitor be imperfect
+    too. This page walks through the actual selling point that extension buys: a defender can
+    gain real, measurable value from a real attacker's <i>not</i> knowing exactly what it did,
+    something a one-sided model cannot even express, since its attacker already sees everything.
+    A small 2-round toy is used throughout, small enough to check against an exact,
+    independently-computed LP ground truth at every step.
+  </div>
+
+  <h2>First attempt: nothing happened</h2>
+  <div class="caption" style="margin-top:0;">
+    The obvious experiment: take the validated 2-round toy, build a second copy where the
+    Schemer's observation of the Monitor's action is made <b>perfectly accurate</b> instead of
+    noisy, and compare. Result: <b>identical</b> to three decimals -- same value, same solved
+    policy, same best-response sequence. Hiding the Monitor's action bought nothing.
+  </div>
+  <div class="caption">
+    The reason traces back to this toy's own solved strategy: the Monitor's optimal policy is
+    <b>pure</b> -- Audit at round 0, unconditionally, every time. A pure strategy is perfectly
+    predictable from the game's structure alone; there is nothing left for an observation to
+    reveal that the Schemer couldn't already deduce for free. Concealment only has value when
+    what's being concealed is genuinely <b>randomized</b>.
+  </div>
+
+  <h2>Why this toy never mixes</h2>
+  <div class="caption" style="margin-top:0;">
+    Reducing round 0 to its own 2x2 subgame (ignoring round 1, Monitor: Pass/Audit vs. Schemer:
+    Honest/Attack) exposes the problem directly. Monitor's expected payoff, weighted by the 25%
+    prior that the Schemer is real:
+  </div>
+  <table class="matrix" id="matrix-before">
+    <thead><tr><th></th><th>Schemer: Honest</th><th>Schemer: Attack</th></tr></thead>
+    <tbody>
+      <tr><th>Monitor: Pass</th><td class="zero">0.0</td><td class="neg">&minus;2.5</td></tr>
+      <tr><th>Monitor: Audit</th><td class="neg">&minus;1.0</td><td class="neg">&minus;1.0</td></tr>
+    </tbody>
+  </table>
+  <div class="caption">
+    Catching an attacker under Audit costs the Monitor exactly the same as auditing an honest
+    actor (<code>catch_prob(Audit)=1</code>, so a caught attack is fully neutralized and just
+    costs the flat audit fee either way) -- the bottom row is constant. The Schemer is dead
+    indifferent between Attack and Honest whenever Audited, so the Monitor never needs to hedge
+    against it: a pure choice is always enough. No tension, no mixing, nothing for
+    concealment to protect.
+  </div>
+
+  <h2>Retuning for a genuine mixed strategy</h2>
+  <div class="caption" style="margin-top:0;">
+    Classic inspection games need catching to be a genuine <i>win</i> for the inspector, not just
+    a break-even avoided cost. Added one constant, <code>C_CATCH_BONUS</code>: a reward for
+    actually catching a real attack under Audit, on top of the flat audit fee. That makes the
+    bottom-right cell strictly better than the bottom-left for the Monitor, which is exactly the
+    cyclic (matching-pennies-style) structure a mixed equilibrium requires:
+  </div>
+  <table class="matrix">
+    <thead><tr><th></th><th>Schemer: Honest</th><th>Schemer: Attack</th></tr></thead>
+    <tbody>
+      <tr><th>Monitor: Pass</th><td class="zero">0.0</td><td class="neg">&minus;2.5</td></tr>
+      <tr><th>Monitor: Audit</th><td class="neg">&minus;1.0</td><td class="pos">+1.0</td></tr>
+    </tbody>
+  </table>
+  <div class="caption">
+    Hand-derived the round-0 indifference condition analytically:
+    <code>P(Pass) = C_CATCH_BONUS / (10 + C_CATCH_BONUS)</code>, valid for any
+    <code>C_CATCH_BONUS &gt; 0</code>. Swept it from 0 to 10 in the <i>full</i> two-round LP
+    ground truth (not just this reduced subgame) to confirm the prediction survives the round-1
+    continuation -- it does. <code>C_CATCH_BONUS=0</code> reproduces the old pure result exactly;
+    every value above 0 produces a genuinely fractional Monitor strategy.
+  </div>
+  <svg id="sweep-svg" viewBox="0 0 700 300"></svg>
+  <div class="caption">
+    Picked <b>C_CATCH_BONUS = 2.0</b> (marked above): a clean, comfortably interior mix --
+    Monitor plays Audit 83.3% of the time at round 0, Pass the remaining 16.7%. Only two reward
+    entries in the whole toy change to get here; everything else -- states, transitions,
+    observations, priors -- is untouched.
+  </div>
+
+  <h2>The result</h2>
+  <div class="caption" style="margin-top:0;">
+    With a genuinely mixed Monitor strategy in play, the same noisy-vs-full-info comparison
+    now shows a real, verified gap -- confirmed twice, independently: once from the exact LP
+    ground truth over the full enumerated strategy space, and once from the actual HSVI solver
+    (bar = ground truth, marker = solver's best-response-verified value, thin line = solver's
+    converged bracket).
+  </div>
+  <svg id="bar-svg" viewBox="0 0 700 340"></svg>
+
+  <table class="data">
+    <thead><tr><th>O2 variant</th><th>LP ground truth</th><th>Solver bracket</th><th>Solver best-response</th></tr></thead>
+    <tbody id="data-rows"></tbody>
+  </table>
+
+  <div class="caption">
+    <b>The Monitor is worth about 0.05 more (in this toy's units) when the Schemer can't be
+    sure what it did.</b> Small in absolute terms -- it's a 2-round toy -- but the direction and
+    rough size match exactly between two completely independent computations (LP duality on the
+    full enumerated 8x8 strategy matrix, and HSVI + best-response verification in the actual
+    two-sided solver), which is what makes this a real result rather than solver noise. This is
+    the first finding in this project that a one-sided model cannot produce even in principle:
+    its attacker already sees the defender's realized action by construction, so there is never
+    anything to conceal.
+  </div>
+  <h2>How much noise is actually needed?</h2>
+  <div class="caption" style="margin-top:0;">
+    The comparison above is two points: fully deterministic vs. the toy's current noise level.
+    Interpolating between them (<code>O2(a1) = alpha*noisy(a1) + (1-alpha)*deterministic(a1)</code>,
+    <code>alpha=0</code> is full-info, <code>alpha=1</code> is the toy as built) turns it into a
+    curve, and the shape is more interesting than a smooth trade-off: the value rises steadily off
+    full-info, then hits a sharp corner and goes completely flat.
+  </div>
+  <svg id="sweep2-svg" viewBox="0 0 700 300"></svg>
+  <div class="caption">
+    <b>The Monitor gets the entire defensive benefit of concealment from a small amount of noise
+    -- roughly 20% of the way from deterministic toward the toy's current level -- and every bit
+    of ambiguity beyond that threshold (alpha &asymp; 0.197) is wasted, not additional
+    protection.</b> Once the Schemer can no longer be certain which round-0 action occurred, its
+    best response is already forced into the same hedge it would make under much heavier noise;
+    piling on more ambiguity past that point doesn't change its decision further. Concealment has
+    a threshold of "enough," not a "more is always better" relationship.
+  </div>
+  <div class="caption">
+    Built entirely from the same LP ground-truth machinery already confirmed against the actual
+    solver at both endpoints (<code>alpha=0</code> and <code>alpha=1</code>, marked below) --
+    the interior of the curve itself hasn't been separately re-run through the solver, since it's
+    generated by the identical enumeration/LP code that matched the solver at those two points to
+    two decimals. Worth a spot-check at an interior alpha if this threshold shape ends up load-
+    bearing for anything beyond illustrating the methodology.
+  </div>
+  <div class="caption">
+    The point above was made cleanly and cheaply at toy scale, with an exact ground truth to
+    check against. Tried it at full scale (the real 8-round, 8-problem game) anyway.
+  </div>
+
+  <h2>Confirmed at full scale -- with a caveat</h2>
+  <div class="caption" style="margin-top:0;">
+    First, under the full game's own original reward structure (no bonus): an exact repeat of
+    the toy's original null result. Full-info and noisy brackets, and even the best-response
+    sequences (flat at exactly -57.764 across 7 depths, in both games) matched precisely. A
+    likely reason ties back to an already-documented finding elsewhere in this project: the
+    worst-case Schemer's actual policy attacks almost everywhere, almost always, regardless of
+    belief -- if its behavior barely responds to information it already has, there's nothing
+    left for concealment to change.
+  </div>
+  <div class="caption">
+    Applying the same <code>C_CATCH_BONUS</code> fix (scaled to the same bonus/catastrophe
+    ratio the toy used) brought the effect back, same direction: best-response
+    <b>-52.279 (noisy) vs. -52.308 (full-info)</b>, a real gap of about 0.03 in the Monitor's
+    favor under concealment. But relative to the game's own scale, that's roughly <b>30x
+    smaller proportionally</b> than the toy's effect (0.06% of the full game's value vs. 1.7%
+    of the toy's) -- the mechanism's contribution appears to get diluted across 8 rounds'
+    worth of other reward-driving structure it doesn't touch. The finding generalizes
+    <i>qualitatively</i> (concealing a genuinely mixed strategy has real value, confirmed at
+    both scales) but not <i>proportionally</i> -- a genuine, honest result rather than either
+    a clean confirmation or a clean failure. Not chased further (tighter <code>eps</code>,
+    isolating which specific rounds carry the effect), consistent with treating this as a
+    proof of concept for the methodology.
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<script>
+const SWEEP = [
+  {bonus: 0.00, p: 1.0000},
+  {bonus: 0.50, p: 0.9524},
+  {bonus: 1.00, p: 0.9091},
+  {bonus: 1.50, p: 0.8696},
+  {bonus: 2.00, p: 0.8333},
+  {bonus: 2.50, p: 0.8000},
+  {bonus: 3.00, p: 0.7692},
+  {bonus: 4.00, p: 0.7143},
+  {bonus: 5.00, p: 0.6665},
+  {bonus: 7.00, p: 0.5871},
+  {bonus: 10.00, p: 0.4972},
+];
+const CHOSEN_BONUS = 2.0;
+
+const CONCEAL_SWEEP = [{"alpha": 0.0, "value": -2.940006}, {"alpha": 0.05, "value": -2.927981}, {"alpha": 0.1, "value": -2.915753}, {"alpha": 0.15, "value": -2.903317}, {"alpha": 0.155, "value": -2.902062}, {"alpha": 0.16, "value": -2.900804}, {"alpha": 0.165, "value": -2.899545}, {"alpha": 0.17, "value": -2.898283}, {"alpha": 0.175, "value": -2.897019}, {"alpha": 0.18, "value": -2.895753}, {"alpha": 0.185, "value": -2.894485}, {"alpha": 0.19, "value": -2.893214}, {"alpha": 0.195, "value": -2.891941}, {"alpha": 0.2, "value": -2.891667}, {"alpha": 0.205, "value": -2.891667}, {"alpha": 0.21, "value": -2.891667}, {"alpha": 0.215, "value": -2.891667}, {"alpha": 0.22, "value": -2.891667}, {"alpha": 0.25, "value": -2.891667}, {"alpha": 0.3, "value": -2.891667}, {"alpha": 0.35, "value": -2.891667}, {"alpha": 0.4, "value": -2.891667}, {"alpha": 0.45, "value": -2.891667}, {"alpha": 0.5, "value": -2.891667}, {"alpha": 0.55, "value": -2.891667}, {"alpha": 0.6, "value": -2.891667}, {"alpha": 0.65, "value": -2.891667}, {"alpha": 0.7, "value": -2.891667}, {"alpha": 0.75, "value": -2.891667}, {"alpha": 0.8, "value": -2.891667}, {"alpha": 0.85, "value": -2.891667}, {"alpha": 0.9, "value": -2.891667}, {"alpha": 0.95, "value": -2.891667}, {"alpha": 1.0, "value": -2.891667}];
+const SATURATION_ALPHA = 0.197;
+
+const RESULT = {
+  noisy: { label: "Noisy O2", sub: "Schemer's real view", color: "#a6e3a1",
+    ground_truth: -2.891667, lb: -2.901, ub: -2.883, best_response: -2.899 },
+  fullinfo: { label: "Full-info O2", sub: "Schemer sees exact action", color: "#f38ba8",
+    ground_truth: -2.940006, lb: -2.954, ub: -2.935, best_response: -2.951 },
+};
+
+// --- sweep line chart ---
+(function() {
+  const svg = d3.select("#sweep-svg");
+  const W = 700, H = 300, padL = 60, padR = 40, padT = 20, padB = 46;
+  const chartW = W - padL - padR, chartH = H - padT - padB;
+
+  const xMax = 10, yMin = 0.4, yMax = 1.02;
+  const xScale = b => padL + (b / xMax) * chartW;
+  const yScale = p => padT + (1 - (p - yMin) / (yMax - yMin)) * chartH;
+
+  svg.append("line").attr("x1", padL).attr("x2", W - padR).attr("y1", H - padB).attr("y2", H - padB).attr("stroke", "#45475a");
+  svg.append("line").attr("x1", padL).attr("x2", padL).attr("y1", padT).attr("y2", H - padB).attr("stroke", "#45475a");
+
+  svg.append("text").attr("class", "axislabel").attr("x", padL + chartW / 2).attr("y", H - 10)
+    .attr("text-anchor", "middle").text("C_CATCH_BONUS  (0 = original toy, pure strategy)");
+  svg.append("text").attr("class", "axislabel")
+    .attr("transform", `translate(16, ${padT + chartH / 2}) rotate(-90)`)
+    .attr("text-anchor", "middle").text("P(Audit @ round 0)");
+
+  [1.0, 0.8, 0.6].forEach(p => {
+    svg.append("line").attr("x1", padL).attr("x2", W - padR).attr("y1", yScale(p)).attr("y2", yScale(p))
+      .attr("stroke", "#2d2d41").attr("stroke-dasharray", "3,3");
+    svg.append("text").attr("class", "pointsub").attr("x", padL - 8).attr("y", yScale(p) + 4)
+      .attr("text-anchor", "end").text(p.toFixed(1));
+  });
+
+  const line = d3.line().x(d => xScale(d.bonus)).y(d => yScale(d.p));
+  svg.append("path").datum(SWEEP).attr("d", line).attr("fill", "none").attr("stroke", "#89b4fa").attr("stroke-width", 2);
+  SWEEP.forEach(d => {
+    svg.append("circle").attr("cx", xScale(d.bonus)).attr("cy", yScale(d.p)).attr("r", 3.5)
+      .attr("fill", "#89b4fa");
+  });
+
+  // mark the chosen bonus
+  const chosen = SWEEP.find(d => d.bonus === CHOSEN_BONUS);
+  svg.append("line").attr("x1", xScale(CHOSEN_BONUS)).attr("x2", xScale(CHOSEN_BONUS))
+    .attr("y1", yScale(chosen.p)).attr("y2", H - padB)
+    .attr("stroke", "#f9e2af").attr("stroke-dasharray", "3,3");
+  svg.append("circle").attr("cx", xScale(CHOSEN_BONUS)).attr("cy", yScale(chosen.p)).attr("r", 6)
+    .attr("fill", "#f9e2af").attr("stroke", "#1e1e2e").attr("stroke-width", 1.5);
+  svg.append("text").attr("class", "pointlabel").attr("x", xScale(CHOSEN_BONUS) + 10).attr("y", yScale(chosen.p) - 8)
+    .text(`chosen: bonus=2.0, P(Audit)=${chosen.p.toFixed(4)}`);
+})();
+
+// --- result bar chart ---
+(function() {
+  const svg = d3.select("#bar-svg");
+  const W = 700, H = 340, padL = 70, padR = 40, padT = 20, padB = 50;
+  const chartW = W - padL - padR, chartH = H - padT - padB;
+
+  const keys = ["noisy", "fullinfo"];
+  const vals = keys.flatMap(k => [RESULT[k].ground_truth, RESULT[k].lb, RESULT[k].ub, RESULT[k].best_response]);
+  const yMin = Math.min(...vals) - 0.1, yMax = 0;
+  const yScale = v => padT + (1 - (v - yMin) / (yMax - yMin)) * chartH;
+  const barW = 160, gap = 100;
+  const xCenters = [padL + gap + barW/2, padL + gap*2 + barW*1.5 + gap];
+
+  svg.append("line").attr("x1", padL).attr("x2", W - padR).attr("y1", yScale(0)).attr("y2", yScale(0)).attr("stroke", "#45475a");
+  svg.append("line").attr("x1", padL).attr("x2", padL).attr("y1", padT).attr("y2", H - padB).attr("stroke", "#45475a");
+  svg.append("text").attr("class", "axislabel")
+    .attr("transform", `translate(20, ${padT + chartH / 2}) rotate(-90)`)
+    .attr("text-anchor", "middle").text("root value (Monitor's guarantee, higher = better)");
+
+  keys.forEach((k, i) => {
+    const d = RESULT[k];
+    const cx = xCenters[i];
+    const x0 = cx - barW/2;
+    // ground-truth bar
+    svg.append("rect").attr("x", x0).attr("y", yScale(0)).attr("width", barW)
+      .attr("height", Math.max(0, yScale(d.ground_truth) - yScale(0))).attr("y", yScale(d.ground_truth))
+      .attr("height", yScale(0) - yScale(d.ground_truth))
+      .attr("fill", d.color).attr("opacity", 0.55);
+    // solver bracket as a thin vertical range
+    svg.append("line").attr("x1", cx).attr("x2", cx).attr("y1", yScale(d.lb)).attr("y2", yScale(d.ub))
+      .attr("stroke", "#cdd6f4").attr("stroke-width", 2);
+    svg.append("line").attr("x1", cx - 8).attr("x2", cx + 8).attr("y1", yScale(d.lb)).attr("y2", yScale(d.lb)).attr("stroke", "#cdd6f4").attr("stroke-width", 2);
+    svg.append("line").attr("x1", cx - 8).attr("x2", cx + 8).attr("y1", yScale(d.ub)).attr("y2", yScale(d.ub)).attr("stroke", "#cdd6f4").attr("stroke-width", 2);
+    // best-response marker
+    svg.append("circle").attr("cx", cx).attr("cy", yScale(d.best_response)).attr("r", 5)
+      .attr("fill", "#1e1e2e").attr("stroke", d.color).attr("stroke-width", 2.5);
+    // labels
+    svg.append("text").attr("class", "pointlabel").attr("x", cx).attr("y", H - padB + 22)
+      .attr("text-anchor", "middle").text(d.label);
+    svg.append("text").attr("class", "pointsub").attr("x", cx).attr("y", H - padB + 36)
+      .attr("text-anchor", "middle").text(d.sub);
+    svg.append("text").attr("class", "pointsub").attr("x", cx).attr("y", yScale(d.ground_truth) - 8)
+      .attr("text-anchor", "middle").text(d.ground_truth.toFixed(4));
+  });
+
+  // gap annotation
+  const gtNoisy = RESULT.noisy.ground_truth, gtFull = RESULT.fullinfo.ground_truth;
+  svg.append("text").attr("class", "pointsub").attr("x", (xCenters[0]+xCenters[1])/2).attr("y", padT + 14)
+    .attr("text-anchor", "middle")
+    .text(`gap: ${(gtNoisy - gtFull).toFixed(4)} in the Monitor's favor when concealed`);
+})();
+
+// --- concealment sweep chart ---
+(function() {
+  const svg = d3.select("#sweep2-svg");
+  const W = 700, H = 300, padL = 70, padR = 40, padT = 20, padB = 46;
+  const chartW = W - padL - padR, chartH = H - padT - padB;
+
+  const yMin = -2.95, yMax = -2.88;
+  const xScale = a => padL + a * chartW;
+  const yScale = v => padT + (1 - (v - yMin) / (yMax - yMin)) * chartH;
+
+  svg.append("line").attr("x1", padL).attr("x2", W - padR).attr("y1", H - padB).attr("y2", H - padB).attr("stroke", "#45475a");
+  svg.append("line").attr("x1", padL).attr("x2", padL).attr("y1", padT).attr("y2", H - padB).attr("stroke", "#45475a");
+  svg.append("text").attr("class", "axislabel").attr("x", padL + chartW / 2).attr("y", H - 10)
+    .attr("text-anchor", "middle").text("alpha  (0 = full-info, 1 = current noisy toy)");
+  svg.append("text").attr("class", "axislabel")
+    .attr("transform", `translate(16, ${padT + chartH / 2}) rotate(-90)`)
+    .attr("text-anchor", "middle").text("root value");
+
+  [-2.94, -2.92, -2.90, -2.88].forEach(v => {
+    svg.append("line").attr("x1", padL).attr("x2", W - padR).attr("y1", yScale(v)).attr("y2", yScale(v))
+      .attr("stroke", "#2d2d41").attr("stroke-dasharray", "3,3");
+    svg.append("text").attr("class", "pointsub").attr("x", padL - 8).attr("y", yScale(v) + 4)
+      .attr("text-anchor", "end").text(v.toFixed(2));
+  });
+
+  const line = d3.line().x(d => xScale(d.alpha)).y(d => yScale(d.value));
+  svg.append("path").datum(CONCEAL_SWEEP).attr("d", line).attr("fill", "none").attr("stroke", "#cba6f7").attr("stroke-width", 2);
+
+  // solver-confirmed endpoints
+  svg.append("circle").attr("cx", xScale(0)).attr("cy", yScale(-2.940006)).attr("r", 6)
+    .attr("fill", RESULT.fullinfo.color).attr("stroke", "#1e1e2e").attr("stroke-width", 1.5);
+  svg.append("text").attr("class", "pointsub").attr("x", xScale(0) + 8).attr("y", yScale(-2.940006) - 10).text("solver-confirmed");
+  svg.append("circle").attr("cx", xScale(1)).attr("cy", yScale(-2.891667)).attr("r", 6)
+    .attr("fill", RESULT.noisy.color).attr("stroke", "#1e1e2e").attr("stroke-width", 1.5);
+  svg.append("text").attr("class", "pointsub").attr("x", xScale(1) - 8).attr("y", yScale(-2.891667) - 10)
+    .attr("text-anchor", "end").text("solver-confirmed");
+
+  // saturation threshold marker
+  svg.append("line").attr("x1", xScale(SATURATION_ALPHA)).attr("x2", xScale(SATURATION_ALPHA))
+    .attr("y1", yScale(-2.891667)).attr("y2", H - padB)
+    .attr("stroke", "#f9e2af").attr("stroke-dasharray", "3,3");
+  svg.append("circle").attr("cx", xScale(SATURATION_ALPHA)).attr("cy", yScale(-2.891667)).attr("r", 5)
+    .attr("fill", "#f9e2af").attr("stroke", "#1e1e2e").attr("stroke-width", 1.5);
+  svg.append("text").attr("class", "pointlabel").attr("x", xScale(SATURATION_ALPHA) + 10).attr("y", yScale(-2.891667) + 16)
+    .text(`alpha ≈ ${SATURATION_ALPHA} -- full benefit reached, flat from here on`);
+})();
+
+const rows = d3.select("#data-rows");
+[["noisy","Noisy O2"], ["fullinfo","Full-info O2"]].forEach(([k, label]) => {
+  const d = RESULT[k];
+  const tr = rows.append("tr");
+  tr.append("td").text(label);
+  tr.append("td").attr("class", k === "noisy" ? "hi" : "").text(d.ground_truth.toFixed(6));
+  tr.append("td").text(`[${d.lb.toFixed(3)}, ${d.ub.toFixed(3)}]`);
+  tr.append("td").attr("class", k === "noisy" ? "hi" : "").text(d.best_response.toFixed(3));
+});
+</script>
+</body>
+</html>

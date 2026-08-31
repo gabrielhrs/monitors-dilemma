@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Reconstructed Policy with Defer</title>
+<style>
+  body { margin: 0; padding: 20px; background: #1e1e2e; font-family: monospace; color: #cdd6f4; }
+  .wrap { max-width: 1150px; margin: 0 auto; }
+  h1 { font-size: 18px; margin: 0 0 6px; }
+  #instructions { font-size: 14px; color: #cdd6f4; margin-bottom: 16px; line-height: 1.5; }
+  #instructions code { color: #a6adc8; }
+  .legend { display: flex; flex-wrap: wrap; gap: 16px; font-size: 12px; color: #a6adc8; margin-bottom: 20px; }
+  .legend span.sw { display: inline-block; width: 11px; height: 11px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
+  #nav { font-size: 13px; margin-bottom: 14px; }
+  #nav a { color: #89b4fa; text-decoration: none; }
+  #nav a:hover { text-decoration: underline; }
+  #nav .sep { color: #585b70; margin: 0 8px; }
+
+  .grid { display: grid; grid-template-columns: 150px repeat(3, 1fr); gap: 8px 10px; margin-bottom: 22px; }
+  .rowlabel { display: flex; flex-direction: column; justify-content: center; font-size: 12px; padding: 4px 6px; }
+  .rowlabel b { font-size: 13px; }
+  .rowlabel span { color: #a6adc8; font-size: 10.5px; }
+  .colhead { font-size: 11px; color: #a6adc8; text-align: center; padding-bottom: 2px; }
+
+  .cell { background: #2d2d41; border-radius: 8px; padding: 9px 9px 8px; position: relative; }
+  .cell .pid { font-size: 9.5px; color: #6c7086; position: absolute; top: 4px; right: 7px; }
+  .barWrap { margin-top: 11px; }
+  .barTrack { position: relative; height: 22px; border-radius: 4px; overflow: visible; background: #1e1e2e; }
+  .seg { position: absolute; top: 0; bottom: 0; }
+  .seg.untrained {
+    background: repeating-linear-gradient(45deg, #33334a, #33334a 5px, #2a2a3d 5px, #2a2a3d 10px);
+  }
+  .untrained-label { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    font-size: 9px; color: #6c7086; }
+  .boundary { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(30,30,46,0.8); }
+  /* Tick labels live in their own row below the bar, not overlapping it. Close
+     boundaries alternate between two sub-rows so their text doesn't collide. */
+  .tickRow { position: relative; height: 22px; margin-top: 3px; }
+  .ticklabel { position: absolute; top: 0; font-size: 9px; color: #a6adc8; transform: translateX(-50%); white-space: nowrap; }
+  .ticklabel.row1 { top: 11px; }
+
+  .caption { max-width: 1150px; font-size: 13px; color: #a6adc8; margin: 4px 0 20px; line-height: 1.55; }
+  .caption b { color: #cdd6f4; }
+  h2 { font-size: 14px; margin: 26px 0 8px; color: #cdd6f4; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div id="nav">
+    <b>Toy AI-control demo</b> -- <a href="monitors_dilemma.html">Play the game</a>
+    <span class="sep">|</span><a href="convergence_tree.html">See the solver converge</a>
+    <span class="sep">|</span><a href="strategy_comparison.html">Fixed vs. adaptive strategy</a>
+    <span class="sep">|</span><a href="policy_reconstruction.html">Reconstructed policy</a>
+    <span class="sep">|</span><a href="policy_reconstruction_defer.html">With Defer</a>
+    <span class="sep">|</span><a href="trial_walkthrough.html">One trial, worked example</a>
+    <span class="sep">|</span><a href="attacker_policy.html">Attacker's worst-case strategy</a>
+    <span class="sep">|</span><a href="safety_usefulness.html">Safety vs. usefulness</a>
+    <span class="sep">|</span><a href="two_sided_concealment.html">Two-sided: value of concealment</a>
+  </div>
+  <h1>Reconstructed policy with Defer</h1>
+  <div id="instructions">
+    Same policy-reconstruction technique as the <a href="policy_reconstruction.html">3-action page</a>,
+    applied to a 4th Monitor action: <b>Defer</b>, which routes the round to a weaker-but-trusted model
+    instead of running the untrusted output at all. Deferring is unconditionally safe (no catastrophe is
+    possible) and reveals no signal about the type, at a fixed usefulness cost
+    (<code>C_DEFER = -3.0</code>) -- not a measured quantity, since no benchmarked quality gap between
+    the untrusted and trusted-fallback models exists in this project's elicitation data; it's an
+    illustrative placeholder, easy to re-sweep via <code>build_toy_control_game.py --c-defer</code>.
+    Unlike Audit, Defer is never budget-gated. There's no separate "suspicion score" signal feeding this
+    -- P(Schemer) already is the continuous suspicion estimate; the question this page answers is simply
+    where, if anywhere, the solved policy actually chooses to defer as that belief rises.
+  </div>
+  <div class="legend">
+    <span><span class="sw" style="background:#6c7086"></span>Pass</span>
+    <span><span class="sw" style="background:#89b4fa"></span>Cheap</span>
+    <span><span class="sw" style="background:#cba6f7"></span>Audit</span>
+    <span><span class="sw" style="background:#94e2d5"></span>Defer</span>
+    <span><span class="sw" style="background:#33334a;background-image:repeating-linear-gradient(45deg,#33334a,#33334a 3px,#2a2a3d 3px,#2a2a3d 6px)"></span>never backed up (still the arbitrary uniform default)</span>
+  </div>
+
+  <div class="caption">
+    <b>Update: this solve has now been properly tightened.</b> The first version of this page was run
+    under the same bug that affected the 3-action solve -- <code>hsvi.h</code>'s <code>HSVI_GOAL</code>
+    constant was silently capping convergence at a bound-gap of 1.0 regardless of the requested
+    <code>eps</code>. With that fixed, this game ran 80 iterations to a gap under 0.05 (was 48
+    iterations, gap 0.65). The reassuring result: essentially nothing here moved. The root's value
+    (<b>-16.3068</b>) is bit-for-bit identical to the loose run, now bracketed by a much tighter upper
+    bound (-16.26, was -15.66), and every threshold below is the same or within 0.01 of before -- unlike
+    the 3-action game, where tightening genuinely flipped one partition's optimal action. Four partitions
+    still show the hatched "never backed up" pattern; as on the 3-action page, at least some of those are
+    structurally unreachable from the actual starting budget rather than under-explored.
+  </div>
+
+  <h2>Round x audit-budget grid</h2>
+  <div class="grid" id="grid"></div>
+
+  <div class="caption">
+    <b>Defer only wins once Audit is off the table, exactly as the costs predict:</b> Audit catches with
+    certainty at a cost of -1.0, so it strictly dominates Defer's -3.0 whenever any audit budget remains
+    -- and that's exactly what the solve found. Across every budget-1 and budget-2 partition here, Defer's
+    weight is 0% the moment real backups exist; Audit (or a Pass/Audit mix while belief is still low) wins
+    outright. Defer only shows up in the budget-0 column, where Audit isn't a choice any more.
+  </div>
+
+  <div class="caption">
+    <b>And once it's the only safe option left, it appears as a clean, domain-dependent threshold:</b> in
+    bounded-domain rounds (P6 = R3 fibonacci, P15 = R6 is_prime, P18 = R7 sum_of_digits, where the cheap
+    check has real bite), the policy goes Cheap&rarr;Defer, with Defer taking over once belief crosses
+    roughly <b>0.06-0.09</b>. In unbounded-domain rounds (P9 = R4 reverse_string, P12 = R5 count_vowels),
+    where the cheap check gives literally zero protection, the policy skips straight from Pass to Defer
+    at an even lower threshold, around <b>0.04-0.05</b> -- there's no point paying for a Cheap check that
+    can't catch anything, so the solver goes directly from doing nothing to fully bypassing the untrusted
+    model. Both the existence of a threshold and its domain-dependent shape fell out of the solve; neither
+    was designed in. That's the concrete answer to the original question -- yes, a "defer once belief
+    crosses a threshold" rule is really what the optimal policy does once auditing is unavailable.
+  </div>
+
+  <div class="caption">
+    <b>A separate, better-grounded comparison:</b> it's tempting to measure these thresholds against
+    Audit's own threshold at the root (~0.70 on the <a href="policy_reconstruction.html">3-action
+    page</a>), but that's a different partition answering a different question -- whether to spend one
+    of two audits now versus saving it, not "is there anything better than Cheap/Pass left." The
+    comparison that <i>is</i> valid: the root's own threshold, for its own decision, in this same
+    4-action game. It moved from 0.70 (no Defer anywhere in the game) to about <b>0.06</b> (Defer
+    available in later rounds) -- even though the root itself never plays Defer, since Audit still
+    dominates it there. The likely mechanism: once budget-0 rounds have Defer as a safety backstop,
+    running out of the audit budget early is no longer as costly, which lowers the opportunity cost of
+    spending an audit now rather than saving it. Unlike the thresholds above, this particular number
+    rests on only 2-3 vectors at the root in both solves, so treat it as a real, repeatable finding
+    (it didn't move between the loose and tight solves) rather than a fully precise one.
+  </div>
+</div>
+
+<script>
+const PROBLEMS = ["find_maximum", "is_palindrome", "fibonacci", "reverse_string",
+                  "count_vowels", "is_prime", "sum_of_digits", "remove_duplicates"];
+const ACTION_NAMES = ["Pass", "Cheap", "Audit", "Defer"];
+const ACTION_RGB = [[108,112,134],[137,180,250],[203,166,247],[148,226,213]]; // #6c7086 #89b4fa #cba6f7 #94e2d5
+const BUDGETS = [2, 1, 0]; // full -> spent, left to right
+
+// Compressed sweep data: for each partition id, the runs of (nearly-)constant
+// mixed strategy across the belief sweep, from games/policy_sweep_defer.json
+// (produced by exportPolicySweep in main.cpp, run against the 4-action
+// games/toy_control_game_defer.posg). Format per partition:
+// { actions: [global action indices], nVectors, runs: [[beliefStart, [p_a0,p_a1,...], beliefEnd], ...] }
+const DATA = {"0":{"actions":[0,1,3],"nVectors":1,"runs":[[0,[0.3333,0.3333,0.3333],1]]},"1":{"actions":[0,1,2,3],"nVectors":1,"runs":[[0,[0.25,0.25,0.25,0.25],1]]},"2":{"actions":[0,1,2,3],"nVectors":3,"runs":[[0,[0.25,0.25,0.25,0.25],0.05],[0.06,[0,0,1,0],1]]},"3":{"actions":[0,1,3],"nVectors":1,"runs":[[0,[0.3333,0.3333,0.3333],1]]},"4":{"actions":[0,1,2,3],"nVectors":2,"runs":[[0,[0.7334,0,0.2666,0],0.07],[0.08,[0,0,1,0],1]]},"5":{"actions":[0,1,2,3],"nVectors":2,"runs":[[0,[0.25,0.25,0.25,0.25],0.05],[0.06,[0,0,1,0],1]]},"6":{"actions":[0,1,3],"nVectors":3,"runs":[[0,[0,1,0],0.08],[0.09,[0,0,1],1]]},"7":{"actions":[0,1,2,3],"nVectors":2,"runs":[[0,[0,0.823,0.177,0],0.1],[0.11,[0,0,1,0],1]]},"8":{"actions":[0,1,2,3],"nVectors":2,"runs":[[0,[0.25,0.25,0.25,0.25],0.04],[0.05,[0,0,1,0],1]]},"9":{"actions":[0,1,3],"nVectors":3,"runs":[[0,[1,0,0],0.05],[0.06,[0,0,1],1]]},"10":{"actions":[0,1,2,3],"nVectors":2,"runs":[[0,[0.6352,0,0.3648,0],0.13],[0.14,[0,0,1,0],1]]},"11":{"actions":[0,1,2,3],"nVectors":2,"runs":[[0,[0,0,1,0],1]]},"12":{"actions":[0,1,3],"nVectors":3,"runs":[[0,[1,0,0],0.03],[0.04,[0,0,1],1]]},"13":{"actions":[0,1,2,3],"nVectors":2,"runs":[[0,[0.647,0,0.353,0],0.13],[0.14,[0,0,1,0],1]]},"14":{"actions":[0,1,2,3],"nVectors":2,"runs":[[0,[0.25,0.25,0.25,0.25],0.03],[0.04,[0,0,1,0],1]]},"15":{"actions":[0,1,3],"nVectors":2,"runs":[[0,[0,1,0],0.07],[0.08,[0,0,1],1]]},"16":{"actions":[0,1,2,3],"nVectors":2,"runs":[[0,[0,0.6541,0.3459,0],0.13],[0.14,[0,0,1,0],1]]},"17":{"actions":[0,1,2,3],"nVectors":2,"runs":[[0,[0.25,0.25,0.25,0.25],0.02],[0.03,[0,0,1,0],1]]},"18":{"actions":[0,1,3],"nVectors":2,"runs":[[0,[0,1,0],0.07],[0.08,[0,0,1],1]]},"19":{"actions":[0,1,2,3],"nVectors":2,"runs":[[0,[0,0.5213,0.4787,0],0.12],[0.13,[0,-0.0,1,0],1]]},"20":{"actions":[0,1,2,3],"nVectors":1,"runs":[[0,[0,0,1,0],1]]},"21":{"actions":[0,1,3],"nVectors":2,"runs":[[0,[1,0,0],0.05],[0.06,[0,0,1],1]]},"22":{"actions":[0,1,2,3],"nVectors":1,"runs":[[0,[0,0,1,0],1]]},"23":{"actions":[0,1,2,3],"nVectors":1,"runs":[[0,[0.25,0.25,0.25,0.25],1]]}};
+
+function blend(actions, probs) {
+  let r=0,g=0,b=0;
+  for (let i = 0; i < actions.length; i++) {
+    const c = ACTION_RGB[actions[i]];
+    r += c[0]*probs[i]; g += c[1]*probs[i]; b += c[2]*probs[i];
+  }
+  return `rgb(${Math.round(r)},${Math.round(g)},${Math.round(b)})`;
+}
+
+function isUntrained(part) {
+  // Only ever had its initial (never-backed-up) uniform strategy: a single
+  // run spanning the whole belief range with a uniform mixture.
+  if (part.nVectors > 1 || part.runs.length > 1) return false;
+  const probs = part.runs[0][1];
+  const uniform = 1 / probs.length;
+  return probs.every(p => Math.abs(p - uniform) < 1e-4);
+}
+
+// Minimum horizontal gap (in % of track width) between two tick labels
+// placed on the same sub-row before we bump the later one to the row below.
+const MIN_LABEL_GAP_PCT = 9;
+
+function buildCell(pid) {
+  const part = DATA[pid];
+  const cell = document.createElement("div");
+  cell.className = "cell";
+
+  const tag = document.createElement("div");
+  tag.className = "pid";
+  tag.textContent = `P${pid}`;
+  cell.appendChild(tag);
+
+  const barWrap = document.createElement("div");
+  barWrap.className = "barWrap";
+
+  const track = document.createElement("div");
+  track.className = "barTrack";
+  barWrap.appendChild(track);
+
+  if (isUntrained(part)) {
+    const seg = document.createElement("div");
+    seg.className = "seg untrained";
+    seg.style.left = "0%";
+    seg.style.width = "100%";
+    track.appendChild(seg);
+    const utag = document.createElement("div");
+    utag.className = "untrained-label";
+    utag.textContent = "never backed up";
+    track.appendChild(utag);
+    cell.appendChild(barWrap);
+    return cell;
+  }
+
+  const tickRow = document.createElement("div");
+  tickRow.className = "tickRow";
+  const lastPosByRow = [-Infinity, -Infinity];
+
+  part.runs.forEach((run, idx) => {
+    const [start, probs, end] = run;
+    const w = Math.max(end - start, 0.012); // keep near-zero-width runs visible
+    const seg = document.createElement("div");
+    seg.className = "seg";
+    seg.style.left = `${start * 100}%`;
+    seg.style.width = `${w * 100}%`;
+    seg.style.background = blend(part.actions, probs);
+    const label = part.actions.map((a,i) => `${ACTION_NAMES[a]} ${(probs[i]*100).toFixed(0)}%`)
+      .filter((_,i) => probs[i] > 0.001).join(", ");
+    seg.title = `belief [${start.toFixed(2)}, ${end.toFixed(2)}]: ${label}`;
+    track.appendChild(seg);
+
+    if (idx > 0) {
+      const posPct = start * 100;
+
+      const bd = document.createElement("div");
+      bd.className = "boundary";
+      bd.style.left = `${posPct}%`;
+      track.appendChild(bd);
+
+      // Pick the first sub-row whose last label is far enough away, so two
+      // close boundaries (e.g. 0.02 and 0.03) don't render on top of each other.
+      let row = 0;
+      if (posPct - lastPosByRow[0] < MIN_LABEL_GAP_PCT) row = 1;
+      lastPosByRow[row] = posPct;
+
+      const tl = document.createElement("div");
+      tl.className = "ticklabel" + (row === 1 ? " row1" : "");
+      tl.style.left = `${posPct}%`;
+      tl.textContent = start.toFixed(2);
+      tickRow.appendChild(tl);
+    }
+  });
+
+  barWrap.appendChild(tickRow);
+  cell.appendChild(barWrap);
+  return cell;
+}
+
+const grid = document.getElementById("grid");
+const corner = document.createElement("div");
+grid.appendChild(corner);
+BUDGETS.forEach(b => {
+  const h = document.createElement("div");
+  h.className = "colhead";
+  h.textContent = b === 0 ? "Budget 0 (spent)" : `Budget ${b}`;
+  grid.appendChild(h);
+});
+
+for (let i = 0; i < 8; i++) {
+  const label = document.createElement("div");
+  label.className = "rowlabel";
+  label.innerHTML = `<b>R${i + 1}</b><span>${PROBLEMS[i]}</span>`;
+  grid.appendChild(label);
+
+  BUDGETS.forEach(b => {
+    const pid = i * 3 + b;
+    grid.appendChild(buildCell(pid));
+  });
+}
+</script>
+</body>
+</html>

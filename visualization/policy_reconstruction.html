@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Reconstructed Belief-to-Action Policy</title>
+<style>
+  body { margin: 0; padding: 20px; background: #1e1e2e; font-family: monospace; color: #cdd6f4; }
+  .wrap { max-width: 1150px; margin: 0 auto; }
+  h1 { font-size: 18px; margin: 0 0 6px; }
+  #instructions { font-size: 14px; color: #cdd6f4; margin-bottom: 16px; line-height: 1.5; }
+  #instructions code { color: #a6adc8; }
+  .legend { display: flex; flex-wrap: wrap; gap: 16px; font-size: 12px; color: #a6adc8; margin-bottom: 20px; }
+  .legend span.sw { display: inline-block; width: 11px; height: 11px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
+  #nav { font-size: 13px; margin-bottom: 14px; }
+  #nav a { color: #89b4fa; text-decoration: none; }
+  #nav a:hover { text-decoration: underline; }
+  #nav .sep { color: #585b70; margin: 0 8px; }
+
+  .grid { display: grid; grid-template-columns: 150px repeat(3, 1fr); gap: 8px 10px; margin-bottom: 22px; }
+  .rowlabel { display: flex; flex-direction: column; justify-content: center; font-size: 12px; padding: 4px 6px; }
+  .rowlabel b { font-size: 13px; }
+  .rowlabel span { color: #a6adc8; font-size: 10.5px; }
+  .colhead { font-size: 11px; color: #a6adc8; text-align: center; padding-bottom: 2px; }
+
+  .cell { background: #2d2d41; border-radius: 8px; padding: 9px 9px 8px; position: relative; }
+  .cell .pid { font-size: 9.5px; color: #6c7086; position: absolute; top: 4px; right: 7px; }
+  .barWrap { margin-top: 11px; }
+  .barTrack { position: relative; height: 22px; border-radius: 4px; overflow: visible; background: #1e1e2e; }
+  .seg { position: absolute; top: 0; bottom: 0; }
+  .seg.untrained {
+    background: repeating-linear-gradient(45deg, #33334a, #33334a 5px, #2a2a3d 5px, #2a2a3d 10px);
+  }
+  .untrained-label { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    font-size: 9px; color: #6c7086; }
+  .boundary { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(30,30,46,0.8); }
+  /* Tick labels live in their own row below the bar, not overlapping it. Close
+     boundaries alternate between two sub-rows so their text doesn't collide. */
+  .tickRow { position: relative; height: 22px; margin-top: 3px; }
+  .ticklabel { position: absolute; top: 0; font-size: 9px; color: #a6adc8; transform: translateX(-50%); white-space: nowrap; }
+  .ticklabel.row1 { top: 11px; }
+
+  .caption { max-width: 1150px; font-size: 13px; color: #a6adc8; margin: 4px 0 20px; line-height: 1.55; }
+  .caption b { color: #cdd6f4; }
+  h2 { font-size: 14px; margin: 26px 0 8px; color: #cdd6f4; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div id="nav">
+    <b>Toy AI-control demo</b> -- <a href="monitors_dilemma.html">Play the game</a>
+    <span class="sep">|</span><a href="convergence_tree.html">See the solver converge</a>
+    <span class="sep">|</span><a href="strategy_comparison.html">Fixed vs. adaptive strategy</a>
+    <span class="sep">|</span><a href="policy_reconstruction.html">Reconstructed policy</a>
+    <span class="sep">|</span><a href="policy_reconstruction_defer.html">With Defer</a>
+    <span class="sep">|</span><a href="trial_walkthrough.html">One trial, worked example</a>
+    <span class="sep">|</span><a href="attacker_policy.html">Attacker's worst-case strategy</a>
+    <span class="sep">|</span><a href="safety_usefulness.html">Safety vs. usefulness</a>
+    <span class="sep">|</span><a href="two_sided_concealment.html">Two-sided: value of concealment</a>
+  </div>
+  <h1>Reconstructed belief-to-action policy</h1>
+  <div id="instructions">
+    Every trial we've shown so far played out one belief path at a time. This page asks a different
+    question: at <i>any</i> belief P(Schemer), which action does the solved game actually recommend?
+    For each partition (a round x audit-budget pair), the solver keeps a set of lower-bound alpha-vectors,
+    each carrying a <code>StrategyNode</code> with a mixed action attached. <code>getValue(belief)
+    = max_j alpha_j &middot; belief</code> already picks the best vector -- the only change needed
+    (<code>getBestVector</code>, added to <code>AlphaVectorValueFunction</code>) was to expose
+    <i>which</i> vector <code>j</code> won, so we can read off its attached strategy. That's the same
+    move as the alpha-vector-to-policy reconstruction from the L4DC paper, applied here to sweep belief
+    from 0 to 1 and see where the recommended action actually changes -- no LP solving involved, just
+    evaluating the alpha-vectors already sitting in memory after <code>solve()</code> returns.
+  </div>
+  <div class="legend">
+    <span><span class="sw" style="background:#6c7086"></span>Pass</span>
+    <span><span class="sw" style="background:#89b4fa"></span>Cheap</span>
+    <span><span class="sw" style="background:#cba6f7"></span>Audit</span>
+    <span><span class="sw" style="background:#33334a;background-image:repeating-linear-gradient(45deg,#33334a,#33334a 3px,#2a2a3d 3px,#2a2a3d 6px)"></span>never backed up (still the arbitrary uniform default)</span>
+  </div>
+
+  <div class="caption">
+    <b>Caveat first, updated:</b> an earlier version of this page ran only 6 HSVI iterations and
+    quoted a 0.46 threshold at the root -- that number turned out to be real but badly imprecise. A
+    bug was found and fixed (<code>hsvi.h</code>'s <code>HSVI_GOAL</code> constant was silently
+    capping every solve at a bound-gap of 1.0, regardless of the <code>eps</code> passed on the
+    command line), and this page now reflects a genuinely tightened solve: 29 iterations, gap under
+    0.05. 8 of the 24 partitions were untrained at 6 iterations; re-solving with the fix trained 4 of
+    those, leaving 4 still hatched below. Two of those (round 1 at budget 0, round 2 at budget 0) are
+    structurally unreachable from the actual starting budget of 2, so there's nothing to train --
+    HSVI is a targeted search, not exhaustive dynamic programming, and correctly has no reason to
+    visit belief points that can never occur. The other two are more likely genuinely under-explored
+    still.
+  </div>
+
+  <h2>Round x audit-budget grid</h2>
+  <div class="grid" id="grid"></div>
+
+  <div class="caption">
+    <b>An emergent threshold, not a designed one -- now more precisely located:</b> partition 2,
+    round 1 at full budget, is the root of the whole game. Its policy is a mostly-Audit mix for
+    belief up to about <b>0.70</b>, then flips to deterministic Audit above that -- a real threshold,
+    just further out than the earlier imprecise solve suggested. Partition 4 (round 2, budget 1,
+    reached right after an early audit) shows the same shape with its own threshold around
+    <b>0.24</b>; partition 10 (round 4, budget 1) shows it again around <b>0.29</b>, essentially
+    unchanged from before. The budget-0 partitions (6, 15, 18 -- no audits left to spend) show a much
+    lower Pass&rarr;Cheap threshold, now consistently around belief <b>0.03</b>. None of these
+    thresholds were designed in -- they fell out of solving the game, and held up (with corrected
+    locations) under tighter convergence.
+  </div>
+
+  <div class="caption">
+    <b>What tighter convergence actually caught:</b> partition 16 (round 6, budget 1) didn't just
+    move its threshold -- it flipped which action wins outright. The imprecise solve had it settling
+    on deterministic <i>Audit</i> above belief 0.14; the tightened solve instead settles on
+    deterministic <i>Cheap</i> above belief 0.07, with Audit's weight dropping to zero. That's a
+    plausible, rational reversal rather than noise: round 6 is bounded-domain, where Cheap gives real
+    (18%) protection, but round 8 two rounds later is unbounded, where Cheap gives none at all and
+    Audit is the only thing that works. With only one audit left at this point, it's better to spend
+    it protecting the round where nothing else can help, and accept Cheap's partial protection here
+    where it can. The looser solve hadn't yet worked that trade-off out; the tighter one has. It's a
+    reminder that "an emergent threshold" and "the right threshold" aren't the same claim -- the first
+    one was visible even at 6 iterations, but trusting the second needed the fix.
+  </div>
+</div>
+
+<script>
+const PROBLEMS = ["find_maximum", "is_palindrome", "fibonacci", "reverse_string",
+                  "count_vowels", "is_prime", "sum_of_digits", "remove_duplicates"];
+const ACTION_NAMES = ["Pass", "Cheap", "Audit"];
+const ACTION_RGB = [[108,112,134],[137,180,250],[203,166,247]]; // #6c7086 #89b4fa #cba6f7
+const BUDGETS = [2, 1, 0]; // full -> spent, left to right
+
+// Compressed sweep data: for each partition id, the runs of (nearly-)constant
+// mixed strategy across the belief sweep, from games/policy_sweep.json
+// (produced by exportPolicySweep in main.cpp). Format per partition:
+// { actions: [global action indices], nVectors, runs: [[beliefStart, [p_a0,p_a1,...], beliefEnd], ...] }
+const DATA = {"0":{"actions":[0,1],"nVectors":1,"runs":[[0,[0.5,0.5],1]]},"1":{"actions":[0,1,2],"nVectors":1,"runs":[[0,[0.3333,0.3333,0.3333],1]]},"2":{"actions":[0,1,2],"nVectors":2,"runs":[[0,[0.0319,0,0.9681],0.69],[0.7,[0,0,1],1]]},"3":{"actions":[0,1],"nVectors":1,"runs":[[0,[0.5,0.5],1]]},"4":{"actions":[0,1,2],"nVectors":2,"runs":[[0,[0.3081,0,0.6919],0.23],[0.24,[0,0,1],1]]},"5":{"actions":[0,1,2],"nVectors":3,"runs":[[0,[0.3333,0.3333,0.3333],0],[0.01,[0.0164,0,0.9836],0.77],[0.78,[0,0,1],1]]},"6":{"actions":[0,1],"nVectors":2,"runs":[[0,[1,0],0.02],[0.03,[0,1],1]]},"7":{"actions":[0,1,2],"nVectors":3,"runs":[[0,[0,1,0],1]]},"8":{"actions":[0,1,2],"nVectors":3,"runs":[[0,[0.3333,0.3333,0.3333],0],[0.01,[0,1,0],1]]},"9":{"actions":[0,1],"nVectors":2,"runs":[[0,[1,0],1]]},"10":{"actions":[0,1,2],"nVectors":3,"runs":[[0,[0.2355,0,0.7645],0.27],[0.28,[0.1898,0,0.8102],0.28],[0.29,[0,0,1],1]]},"11":{"actions":[0,1,2],"nVectors":3,"runs":[[0,[0.3333,0.3333,0.3333],0],[0.01,[0.0451,0,0.9549],0.46],[0.47,[0.0253,0,0.9747],1]]},"12":{"actions":[0,1],"nVectors":2,"runs":[[0,[1,0],1]]},"13":{"actions":[0,1,2],"nVectors":3,"runs":[[0,[0.2449,0,0.7551],0.13],[0.14,[0.2459,0,0.7541],0.16],[0.17,[0.0,0,1],1]]},"14":{"actions":[0,1,2],"nVectors":2,"runs":[[0,[0.3333,0.3333,0.3333],0.01],[0.02,[0,0,1],1]]},"15":{"actions":[0,1],"nVectors":2,"runs":[[0,[1,0],0.02],[0.03,[0,1],1]]},"16":{"actions":[0,1,2],"nVectors":3,"runs":[[0,[0.3333,0.3333,0.3333],0],[0.01,[0,0.1694,0.8306],0.06],[0.07,[0,1,0],1]]},"17":{"actions":[0,1,2],"nVectors":3,"runs":[[0,[0.3333,0.3333,0.3333],0.01],[0.02,[0,0.3743,0.6257],0.27],[0.28,[0,0,1],1]]},"18":{"actions":[0,1],"nVectors":2,"runs":[[0,[1,0],0.02],[0.03,[0,1],1]]},"19":{"actions":[0,1,2],"nVectors":2,"runs":[[0,[0.3333,0.3333,0.3333],0.01],[0.02,[0,1,0],1]]},"20":{"actions":[0,1,2],"nVectors":2,"runs":[[0,[0.3333,0.3333,0.3333],0.01],[0.02,[0,0,1],1]]},"21":{"actions":[0,1],"nVectors":1,"runs":[[0,[1,0],1]]},"22":{"actions":[0,1,2],"nVectors":2,"runs":[[0,[0.3333,0.3333,0.3333],0.01],[0.02,[0,0,1],1]]},"23":{"actions":[0,1,2],"nVectors":1,"runs":[[0,[0.3333,0.3333,0.3333],1]]}};
+
+function blend(actions, probs) {
+  let r=0,g=0,b=0;
+  for (let i = 0; i < actions.length; i++) {
+    const c = ACTION_RGB[actions[i]];
+    r += c[0]*probs[i]; g += c[1]*probs[i]; b += c[2]*probs[i];
+  }
+  return `rgb(${Math.round(r)},${Math.round(g)},${Math.round(b)})`;
+}
+
+function isUntrained(part) {
+  // Only ever had its initial (never-backed-up) uniform strategy: a single
+  // run spanning the whole belief range with a uniform mixture.
+  if (part.nVectors > 1 || part.runs.length > 1) return false;
+  const probs = part.runs[0][1];
+  const uniform = 1 / probs.length;
+  return probs.every(p => Math.abs(p - uniform) < 1e-4);
+}
+
+// Minimum horizontal gap (in % of track width) between two tick labels
+// placed on the same sub-row before we bump the later one to the row below.
+const MIN_LABEL_GAP_PCT = 9;
+
+function buildCell(pid) {
+  const part = DATA[pid];
+  const cell = document.createElement("div");
+  cell.className = "cell";
+
+  const tag = document.createElement("div");
+  tag.className = "pid";
+  tag.textContent = `P${pid}`;
+  cell.appendChild(tag);
+
+  const barWrap = document.createElement("div");
+  barWrap.className = "barWrap";
+
+  const track = document.createElement("div");
+  track.className = "barTrack";
+  barWrap.appendChild(track);
+
+  if (isUntrained(part)) {
+    const seg = document.createElement("div");
+    seg.className = "seg untrained";
+    seg.style.left = "0%";
+    seg.style.width = "100%";
+    track.appendChild(seg);
+    const utag = document.createElement("div");
+    utag.className = "untrained-label";
+    utag.textContent = "never backed up";
+    track.appendChild(utag);
+    cell.appendChild(barWrap);
+    return cell;
+  }
+
+  const tickRow = document.createElement("div");
+  tickRow.className = "tickRow";
+  const lastPosByRow = [-Infinity, -Infinity];
+
+  part.runs.forEach((run, idx) => {
+    const [start, probs, end] = run;
+    const w = Math.max(end - start, 0.012); // keep near-zero-width runs visible
+    const seg = document.createElement("div");
+    seg.className = "seg";
+    seg.style.left = `${start * 100}%`;
+    seg.style.width = `${w * 100}%`;
+    seg.style.background = blend(part.actions, probs);
+    const label = part.actions.map((a,i) => `${ACTION_NAMES[a]} ${(probs[i]*100).toFixed(0)}%`)
+      .filter((_,i) => probs[i] > 0.001).join(", ");
+    seg.title = `belief [${start.toFixed(2)}, ${end.toFixed(2)}]: ${label}`;
+    track.appendChild(seg);
+
+    if (idx > 0) {
+      const posPct = start * 100;
+
+      const bd = document.createElement("div");
+      bd.className = "boundary";
+      bd.style.left = `${posPct}%`;
+      track.appendChild(bd);
+
+      // Pick the first sub-row whose last label is far enough away, so two
+      // close boundaries (e.g. 0.02 and 0.03) don't render on top of each other.
+      let row = 0;
+      if (posPct - lastPosByRow[0] < MIN_LABEL_GAP_PCT) row = 1;
+      lastPosByRow[row] = posPct;
+
+      const tl = document.createElement("div");
+      tl.className = "ticklabel" + (row === 1 ? " row1" : "");
+      tl.style.left = `${posPct}%`;
+      tl.textContent = start.toFixed(2);
+      tickRow.appendChild(tl);
+    }
+  });
+
+  barWrap.appendChild(tickRow);
+  cell.appendChild(barWrap);
+  return cell;
+}
+
+const grid = document.getElementById("grid");
+const corner = document.createElement("div");
+grid.appendChild(corner);
+BUDGETS.forEach(b => {
+  const h = document.createElement("div");
+  h.className = "colhead";
+  h.textContent = b === 0 ? "Budget 0 (spent)" : `Budget ${b}`;
+  grid.appendChild(h);
+});
+
+for (let i = 0; i < 8; i++) {
+  const label = document.createElement("div");
+  label.className = "rowlabel";
+  label.innerHTML = `<b>R${i + 1}</b><span>${PROBLEMS[i]}</span>`;
+  grid.appendChild(label);
+
+  BUDGETS.forEach(b => {
+    const pid = i * 3 + b;
+    grid.appendChild(buildCell(pid));
+  });
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>HSVI Convergence Tree</title>
+<style>
+  body { margin: 0; padding: 20px; background: #1e1e2e; font-family: monospace; color: #cdd6f4; }
+  #instructions { max-width: 900px; margin: 0 auto 14px; font-size: 14px; }
+  #chart-pane { max-width: 700px; margin: 0 auto 24px; }
+  #controls { display: flex; align-items: center; gap: 12px; font-size: 13px; margin-bottom: 10px; }
+  #controls input[type=range] { flex: 1; }
+  button { background: #45475a; color: #cdd6f4; border: 1px solid #89b4fa; border-radius: 6px;
+           padding: 5px 12px; font-family: monospace; font-size: 13px; cursor: pointer; }
+  button:hover { background: #585b70; }
+  svg { display: block; }
+  #chart-svg { width: 100%; height: auto; }
+  .node-label { font-family: monospace; }
+  .link { fill: none; stroke: #45475a; stroke-width: 2px; }
+  .link.walked { stroke: #f9e2af; stroke-width: 2px; opacity: 0.5; }
+  .link.active { stroke: #f9e2af; stroke-width: 3px; opacity: 1; }
+  .edge-label { font-size: 10px; fill: #a6adc8; }
+  #tree-wrap { width: 100%; max-height: 85vh; overflow: auto; border: 1px solid #313244; border-radius: 8px;
+               box-sizing: border-box; }
+  #tree-svg { display: block; margin: 0 auto; }
+  #tree-scroll-controls { max-width: 100%; margin: 0 auto 6px; display: flex; align-items: center; gap: 8px; font-size: 12px; }
+  #tree-scroll-controls input[type=range] { flex: 1; }
+  #trial-pane { max-width: 900px; margin: 0 auto 22px; font-size: 13px; }
+  #trial-pane h3 { margin: 0 0 8px; font-size: 13px; color: #89b4fa; font-weight: normal; }
+  #trial-path { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; margin-bottom: 22px; }
+  .trial-chip { display: inline-block; background: #2d2d41; border: 1px solid #45475a; border-radius: 6px;
+                padding: 4px 8px; font-size: 11px; line-height: 1.5; white-space: nowrap; }
+  .trial-chip .t-title { color: #cdd6f4; font-weight: bold; }
+  .trial-chip .t-belief { color: #a6adc8; }
+  .trial-arrow { margin: 0 6px; font-size: 11px; color: #f9e2af; white-space: nowrap; }
+  #trial-bounds { margin-top: 8px; }
+  #trial-bounds-svg { width: 100%; height: auto; max-width: 620px; display: block; }
+  #legend { max-width: 900px; margin: 0 auto 16px; font-size: 13px; }
+  #legend summary { cursor: pointer; color: #89b4fa; font-weight: bold; }
+  #legend summary:hover { color: #b4befe; }
+  .legend-body { margin-top: 10px; display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  .legend-body h4 { margin: 0 0 6px; font-size: 12px; color: #a6adc8; text-transform: uppercase; letter-spacing: 0.03em; }
+  .legend-body dl { margin: 0; }
+  .legend-body dt { color: #cdd6f4; font-weight: bold; }
+  .legend-body dt .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+  .legend-body dd { margin: 0 0 8px 0; color: #a6adc8; }
+  #nav { max-width: 900px; margin: 0 auto 14px; font-size: 13px; }
+  #nav a { color: #89b4fa; text-decoration: none; }
+  #nav a:hover { text-decoration: underline; }
+  #nav .sep { color: #585b70; margin: 0 8px; }
+</style>
+</head>
+<body>
+<div id="nav">
+  <b>Toy AI-control demo</b> -- <a href="monitors_dilemma.html">Play the game</a>
+  <span class="sep">|</span><a href="convergence_tree.html">See the solver converge</a>
+  <span class="sep">|</span><a href="strategy_comparison.html">Fixed vs. adaptive strategy</a>
+  <span class="sep">|</span><a href="policy_reconstruction.html">Reconstructed policy</a>
+  <span class="sep">|</span><a href="policy_reconstruction_defer.html">With Defer</a>
+  <span class="sep">|</span><a href="trial_walkthrough.html">One trial, worked example</a>
+  <span class="sep">|</span><a href="attacker_policy.html">Attacker's worst-case strategy</a>
+  <span class="sep">|</span><a href="safety_usefulness.html">Safety vs. usefulness</a>
+  <span class="sep">|</span><a href="two_sided_concealment.html">Two-sided: value of concealment</a>
+</div>
+<div id="instructions">
+  <b>HSVI Convergence Tree</b> -- the real trial-by-trial trace of the actual solver converging on
+  the toy control game (games/hsvi_trace.jsonl -> games/convergence_tree.json). Each node is a
+  distinct (round, budget, belief) point the solver actually queried; drag the slider to replay
+  the 29 trials it ran before width &lt; eps. Nodes fade in as they're first visited; the trial
+  running at the selected iteration is highlighted in yellow. Each node shows its lower/upper
+  bound <i>as of that iteration</i> -- watch the gap between them shrink over trials, and watch
+  the same (partition, belief) point get revisited and tightened across iterations. The tree is
+  wide (85 nodes) -- nodes use short codes for the coding problems and compact labels for
+  budget/belief/bounds (see "What the labels mean" below), and the pan slider or the panel's own
+  scrollbar move the view horizontally. The "Trial spotlight" panel below the chart shows, for
+  whichever iteration is selected, the one trial's actual belief trajectory (root to frontier)
+  and exactly what that trial's backup did to the root's own LB/UB -- this is the rationale for
+  the whole method: each trial picks a promising path, walks it forward, then narrows the bounds
+  on the way back up.
+</div>
+<details id="legend" open>
+  <summary>What the labels mean</summary>
+  <div class="legend-body">
+    <div>
+      <h4>Monitor actions (edge labels, before the "/")</h4>
+      <dl>
+        <dt>Pass</dt>
+        <dd>No check at all. Free (cost 0), but gives zero information -- belief never changes after a Pass, regardless of what it was before.</dd>
+        <dt>Cheap</dt>
+        <dd>k=5 random black-box probes against a reference implementation. Costs -0.2. Only has real power on "bounded" domains (18% chance of catching a live attack); on "unbounded" domains it's blind (0% catch), per the actual measured elicitation data.</dd>
+        <dt>Audit</dt>
+        <dd>Full reference check. Costs -1 and draws down the audit budget (starts at 2), but always reveals the truth for that round (100% catch rate).</dd>
+      </dl>
+    </div>
+    <div>
+      <h4>Observations (edge labels, after the "/")</h4>
+      <dl>
+        <dt>none</dt>
+        <dd>The non-observation from a Pass.</dd>
+        <dt>clear</dt>
+        <dd>A Cheap-check ran and found nothing. Real (if weak) evidence of innocence on bounded domains; uninformative on unbounded ones.</dd>
+        <dt>flag / FLAG</dt>
+        <dd>A Cheap-check ran and caught something. The measured false-positive rate is exactly 0.000, so this is treated as fully diagnostic -- belief jumps straight to P(Schemer)=1, overriding any accumulated "clear" evidence.</dd>
+        <dt>revealed_honest / honest</dt>
+        <dd>An Audit ran and found nothing -- but not necessarily proof of innocence: the solver's worst-case adversary strategy can have a Schemer sometimes play Honest too, so this can leave belief at a small nonzero value rather than exactly 0.</dd>
+        <dt>revealed_attack / ATTACK</dt>
+        <dd>An Audit ran and found a real attack. Always fully diagnostic -- belief jumps to exactly 1.</dd>
+      </dl>
+    </div>
+    <div>
+      <h4>Node contents</h4>
+      <dl>
+        <dt><span class="sw" style="background:#fab387"></span>domain strip (orange = unbounded)</dt>
+        <dd>The coding problem's domain type for that round -- public information, fixed per round, not something the Monitor infers.</dd>
+        <dt><span class="sw" style="background:#a6e3a1"></span>domain strip (green = bounded)</dt>
+        <dd>Same as above; bounded domains are the ones where Cheap-checks actually help.</dd>
+        <dt>P(Schemer)</dt>
+        <dd>The Monitor's current belief that the hidden, persistent type chosen once at the start of the whole 8-round session is "Schemer" (adversarial) rather than "Benign." Persistent means one flag or reveal updates the risk assessment for every remaining round too, not just this one.</dd>
+        <dt>LB / UB</dt>
+        <dd>The solver's lower and upper bound on the game's value at this exact belief point, as of the selected iteration, shown compactly as "lb / ub". The gap between them is the remaining uncertainty; watch the small yellow bar under the numbers shrink as trials tighten it.</dd>
+        <dt>b= / P(S)=</dt>
+        <dd>Short for "budget=" and "P(Schemer)=" -- shrunk to fit the smaller node.</dd>
+        <dt>Problem codes</dt>
+        <dd>FMAX=find_maximum, PAL=is_palindrome, FIB=fibonacci, REV=reverse_string, VOW=count_vowels, PRM=is_prime, SUM=sum_of_digits, DUP=remove_duplicates.</dd>
+      </dl>
+    </div>
+    <div>
+      <h4>Highlighting</h4>
+      <dl>
+        <dt><span class="sw" style="background:#f9e2af"></span>yellow border</dt>
+        <dd>This node was visited (peeked or backed up) during the specific trial running at the currently selected iteration.</dd>
+        <dt><span class="sw" style="background:#f9e2af"></span>bold yellow edge</dt>
+        <dd>This edge's child node was discovered for the very first time at this iteration -- the trial extended the search past the previously-known frontier here.</dd>
+        <dt><span class="sw" style="background:#f9e2af;opacity:0.5"></span>thin yellow edge</dt>
+        <dd>Both ends of this edge were touched by the current trial this iteration, but the child was already known from an earlier iteration -- the trial is re-descending already-explored ground on its way to the frontier (HSVI's "peek" step) rather than discovering anything new. Without this, a trial's walk can show yellow-bordered nodes with no visible yellow trail connecting them back to the root.</dd>
+        <dt>faded / dim nodes</dt>
+        <dd>Not yet visited by any trial up to the selected iteration -- move the slider forward to reveal them.</dd>
+      </dl>
+    </div>
+  </div>
+</details>
+<div id="chart-pane">
+  <div id="controls">
+    <button id="play-btn">Play</button>
+    <span id="iter-label">iteration 0 / 5</span>
+    <input type="range" id="iter-slider" min="0" max="28" value="0" step="1">
+  </div>
+  <svg id="chart-svg" viewBox="0 0 900 140"></svg>
+</div>
+<div id="trial-pane">
+  <h3>Trial spotlight -- what this one trial actually did</h3>
+  <div id="trial-path"></div>
+  <div id="trial-bounds">
+    <svg id="trial-bounds-svg" viewBox="0 0 620 88"></svg>
+  </div>
+</div>
+<div id="tree-scroll-controls">
+  <span>pan</span>
+  <input type="range" id="tree-hscroll" min="0" max="0" value="0" step="1">
+</div>
+<div id="tree-wrap">
+  <svg id="tree-svg"></svg>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<script>
+
+// ---------------------------------------------------------------
+// Real data, produced by build_convergence_tree.py from the actual
+// instrumented HSVI solver run (games/hsvi_trace.jsonl).
+// ---------------------------------------------------------------
+const DATA = {"iterations":[{"iter":0,"elapsed_ms":57,"lb":-64.6024,"ub":-54.9524,"width":9.65006,"numVectors":25,"numPoints":49},{"iter":1,"elapsed_ms":74,"lb":-58.5757,"ub":-55.7024,"width":2.87331,"numVectors":30,"numPoints":51},{"iter":2,"elapsed_ms":87,"lb":-56.859,"ub":-55.7024,"width":1.15666,"numVectors":32,"numPoints":53},{"iter":3,"elapsed_ms":91,"lb":-56.859,"ub":-55.7024,"width":1.15666,"numVectors":32,"numPoints":56},{"iter":4,"elapsed_ms":100,"lb":-56.859,"ub":-55.8237,"width":1.03532,"numVectors":36,"numPoints":53},{"iter":5,"elapsed_ms":119,"lb":-56.8119,"ub":-56.2201,"width":0.591773,"numVectors":46,"numPoints":60},{"iter":6,"elapsed_ms":138,"lb":-56.81,"ub":-56.3767,"width":0.433334,"numVectors":52,"numPoints":67},{"iter":7,"elapsed_ms":156,"lb":-56.81,"ub":-56.3933,"width":0.416793,"numVectors":52,"numPoints":65},{"iter":8,"elapsed_ms":162,"lb":-56.7116,"ub":-56.3933,"width":0.318306,"numVectors":51,"numPoints":70},{"iter":9,"elapsed_ms":180,"lb":-56.7116,"ub":-56.4149,"width":0.296689,"numVectors":51,"numPoints":71},{"iter":10,"elapsed_ms":188,"lb":-56.6653,"ub":-56.4176,"width":0.247718,"numVectors":51,"numPoints":73},{"iter":11,"elapsed_ms":201,"lb":-56.6328,"ub":-56.4176,"width":0.215217,"numVectors":51,"numPoints":84},{"iter":12,"elapsed_ms":215,"lb":-56.6188,"ub":-56.4176,"width":0.201253,"numVectors":51,"numPoints":88},{"iter":13,"elapsed_ms":228,"lb":-56.6188,"ub":-56.4176,"width":0.201253,"numVectors":51,"numPoints":90},{"iter":14,"elapsed_ms":238,"lb":-56.6188,"ub":-56.4176,"width":0.201253,"numVectors":51,"numPoints":92},{"iter":15,"elapsed_ms":247,"lb":-56.6188,"ub":-56.4176,"width":0.201253,"numVectors":51,"numPoints":92},{"iter":16,"elapsed_ms":260,"lb":-56.6188,"ub":-56.4193,"width":0.19951,"numVectors":51,"numPoints":80},{"iter":17,"elapsed_ms":277,"lb":-56.6174,"ub":-56.436,"width":0.181416,"numVectors":56,"numPoints":83},{"iter":18,"elapsed_ms":292,"lb":-56.5879,"ub":-56.455,"width":0.132901,"numVectors":55,"numPoints":78},{"iter":19,"elapsed_ms":307,"lb":-56.5879,"ub":-56.455,"width":0.132851,"numVectors":51,"numPoints":86},{"iter":20,"elapsed_ms":321,"lb":-56.5865,"ub":-56.4623,"width":0.124104,"numVectors":53,"numPoints":82},{"iter":21,"elapsed_ms":326,"lb":-56.5723,"ub":-56.4623,"width":0.109961,"numVectors":53,"numPoints":84},{"iter":22,"elapsed_ms":336,"lb":-56.5723,"ub":-56.4678,"width":0.104554,"numVectors":53,"numPoints":87},{"iter":23,"elapsed_ms":345,"lb":-56.5723,"ub":-56.4678,"width":0.104554,"numVectors":53,"numPoints":90},{"iter":24,"elapsed_ms":352,"lb":-56.5723,"ub":-56.4678,"width":0.104554,"numVectors":53,"numPoints":90},{"iter":25,"elapsed_ms":371,"lb":-56.5719,"ub":-56.4799,"width":0.0920591,"numVectors":58,"numPoints":79},{"iter":26,"elapsed_ms":389,"lb":-56.5718,"ub":-56.4833,"width":0.0885855,"numVectors":60,"numPoints":79},{"iter":27,"elapsed_ms":400,"lb":-56.5363,"ub":-56.4839,"width":0.0524187,"numVectors":58,"numPoints":85},{"iter":28,"elapsed_ms":418,"lb":-56.5346,"ub":-56.4853,"width":0.0493212,"numVectors":52,"numPoints":82}],"rootKey":"0|2|0.2500,0.7500","nodes":{"0|2|0.2500,0.7500":{"key":"0|2|0.2500,0.7500","depth":0,"partition":2,"round":0,"budget":2,"problem":"find_maximum","domain":"unbounded","label":"R1 find_maximum (budget=2)","belief":[0.25,0.75],"history":[{"iter":0,"phase":"peek","lb":-61.2329,"ub":-55.7024},{"iter":0,"phase":"backup","lb":-58.5757,"ub":-55.7024},{"iter":1,"phase":"peek","lb":-58.5757,"ub":-55.7024},{"iter":1,"phase":"backup","lb":-56.859,"ub":-55.7024},{"iter":2,"phase":"peek","lb":-56.859,"ub":-55.7024},{"iter":2,"phase":"backup","lb":-56.859,"ub":-55.7024},{"iter":3,"phase":"peek","lb":-56.859,"ub":-55.7731},{"iter":3,"phase":"backup","lb":-56.859,"ub":-55.8237},{"iter":4,"phase":"peek","lb":-56.859,"ub":-55.8237},{"iter":4,"phase":"backup","lb":-56.8119,"ub":-56.2201},{"iter":5,"phase":"peek","lb":-56.8119,"ub":-56.2201},{"iter":5,"phase":"backup","lb":-56.81,"ub":-56.3767},{"iter":6,"phase":"peek","lb":-56.81,"ub":-56.3767},{"iter":6,"phase":"backup","lb":-56.81,"ub":-56.3933},{"iter":7,"phase":"peek","lb":-56.81,"ub":-56.3933},{"iter":7,"phase":"backup","lb":-56.7116,"ub":-56.3933},{"iter":8,"phase":"peek","lb":-56.7116,"ub":-56.3933},{"iter":8,"phase":"backup","lb":-56.7116,"ub":-56.4149},{"iter":9,"phase":"peek","lb":-56.7116,"ub":-56.4149},{"iter":9,"phase":"backup","lb":-56.6653,"ub":-56.4176},{"iter":10,"phase":"peek","lb":-56.6653,"ub":-56.4176},{"iter":10,"phase":"backup","lb":-56.6328,"ub":-56.4176},{"iter":11,"phase":"peek","lb":-56.6328,"ub":-56.4176},{"iter":11,"phase":"backup","lb":-56.6188,"ub":-56.4176},{"iter":12,"phase":"peek","lb":-56.6188,"ub":-56.4176},{"iter":12,"phase":"backup","lb":-56.6188,"ub":-56.4176},{"iter":13,"phase":"peek","lb":-56.6188,"ub":-56.4176},{"iter":13,"phase":"backup","lb":-56.6188,"ub":-56.4176},{"iter":14,"phase":"peek","lb":-56.6188,"ub":-56.4176},{"iter":14,"phase":"backup","lb":-56.6188,"ub":-56.4176},{"iter":15,"phase":"peek","lb":-56.6188,"ub":-56.4176},{"iter":15,"phase":"backup","lb":-56.6188,"ub":-56.4193},{"iter":16,"phase":"peek","lb":-56.6188,"ub":-56.4193},{"iter":16,"phase":"backup","lb":-56.6174,"ub":-56.436},{"iter":17,"phase":"peek","lb":-56.6174,"ub":-56.436},{"iter":17,"phase":"backup","lb":-56.5879,"ub":-56.455},{"iter":18,"phase":"peek","lb":-56.5879,"ub":-56.455},{"iter":18,"phase":"backup","lb":-56.5879,"ub":-56.455},{"iter":19,"phase":"peek","lb":-56.5879,"ub":-56.455},{"iter":19,"phase":"backup","lb":-56.5865,"ub":-56.4623},{"iter":20,"phase":"peek","lb":-56.5865,"ub":-56.4623},{"iter":20,"phase":"backup","lb":-56.5723,"ub":-56.4623},{"iter":21,"phase":"peek","lb":-56.5723,"ub":-56.4678},{"iter":21,"phase":"backup","lb":-56.5723,"ub":-56.4678},{"iter":22,"phase":"peek","lb":-56.5723,"ub":-56.4678},{"iter":22,"phase":"backup","lb":-56.5723,"ub":-56.4678},{"iter":23,"phase":"peek","lb":-56.5723,"ub":-56.4678},{"iter":23,"phase":"backup","lb":-56.5723,"ub":-56.4678},{"iter":24,"phase":"peek","lb":-56.5723,"ub":-56.4678},{"iter":24,"phase":"backup","lb":-56.5719,"ub":-56.4799},{"iter":25,"phase":"peek","lb":-56.5719,"ub":-56.4799},{"iter":25,"phase":"backup","lb":-56.5718,"ub":-56.4833},{"iter":26,"phase":"peek","lb":-56.5718,"ub":-56.4833},{"iter":26,"phase":"backup","lb":-56.5363,"ub":-56.4839},{"iter":27,"phase":"peek","lb":-56.5363,"ub":-56.4839},{"iter":27,"phase":"backup","lb":-56.5346,"ub":-56.4853}],"children":[{"childKey":"1|4|1.0000,0.0000","action":"Audit","observation":"revealed_attack"},{"childKey":"1|4|0.1992,0.8008","action":"Audit","observation":"revealed_honest"},{"childKey":"1|5|0.2500,0.7500","action":"Pass","observation":"none"},{"childKey":"1|4|0.0419,0.9581","action":"Audit","observation":"revealed_honest"},{"childKey":"1|4|0.0405,0.9595","action":"Audit","observation":"revealed_honest"},{"childKey":"1|4|0.0429,0.9571","action":"Audit","observation":"revealed_honest"},{"childKey":"1|4|0.0441,0.9559","action":"Audit","observation":"revealed_honest"},{"childKey":"1|4|0.0449,0.9551","action":"Audit","observation":"revealed_honest"},{"childKey":"1|4|0.0452,0.9548","action":"Audit","observation":"revealed_honest"},{"childKey":"1|4|0.0440,0.9560","action":"Audit","observation":"revealed_honest"},{"childKey":"1|4|0.0435,0.9565","action":"Audit","observation":"revealed_honest"},{"childKey":"1|4|0.0439,0.9561","action":"Audit","observation":"revealed_honest"},{"childKey":"1|4|0.0438,0.9562","action":"Audit","observation":"revealed_honest"}]},"1|4|1.0000,0.0000":{"key":"1|4|1.0000,0.0000","depth":1,"partition":4,"round":1,"budget":1,"problem":"is_palindrome","domain":"unbounded","label":"R2 is_palindrome (budget=1)","belief":[1,0],"history":[{"iter":0,"phase":"peek","lb":-241.761,"ub":-230.326},{"iter":0,"phase":"backup","lb":-237.58,"ub":-230.326},{"iter":1,"phase":"peek","lb":-237.58,"ub":-230.326},{"iter":1,"phase":"backup","lb":-230.413,"ub":-230.326}],"children":[{"childKey":"2|6|1.0000,0.0000","action":"Audit","observation":"revealed_attack"}]},"2|6|1.0000,0.0000":{"key":"2|6|1.0000,0.0000","depth":2,"partition":6,"round":2,"budget":0,"problem":"fibonacci","domain":"bounded","label":"R3 fibonacci (budget=0)","belief":[1,0],"history":[{"iter":0,"phase":"backup","lb":-249.032,"ub":-241.396},{"iter":1,"phase":"peek","lb":-249.032,"ub":-241.396},{"iter":1,"phase":"backup","lb":-241.487,"ub":-241.396}],"children":[{"childKey":"3|9|1.0000,0.0000","action":"Cheap","observation":"clear"}]},"3|9|1.0000,0.0000":{"key":"3|9|1.0000,0.0000","depth":3,"partition":9,"round":3,"budget":0,"problem":"reverse_string","domain":"unbounded","label":"R4 reverse_string (budget=0)","belief":[1,0],"history":[{"iter":1,"phase":"peek","lb":-218.669,"ub":-210.732},{"iter":1,"phase":"backup","lb":-210.828,"ub":-210.732}],"children":[{"childKey":"4|12|1.0000,0.0000","action":"Pass","observation":"none"}]},"4|12|1.0000,0.0000":{"key":"4|12|1.0000,0.0000","depth":4,"partition":12,"round":4,"budget":0,"problem":"count_vowels","domain":"unbounded","label":"R5 count_vowels (budget=0)","belief":[1,0],"history":[{"iter":1,"phase":"peek","lb":-177.446,"ub":-169.192},{"iter":1,"phase":"backup","lb":-169.293,"ub":-169.192}],"children":[{"childKey":"5|15|1.0000,0.0000","action":"Pass","observation":"none"}]},"5|15|1.0000,0.0000":{"key":"5|15|1.0000,0.0000","depth":5,"partition":15,"round":5,"budget":0,"problem":"is_prime","domain":"bounded","label":"R6 is_prime (budget=0)","belief":[1,0],"history":[{"iter":1,"phase":"peek","lb":-129.752,"ub":-125.465},{"iter":1,"phase":"backup","lb":-125.572,"ub":-125.465}],"children":[{"childKey":"6|18|1.0000,0.0000","action":"Cheap","observation":"clear"}]},"6|18|1.0000,0.0000":{"key":"6|18|1.0000,0.0000","depth":6,"partition":18,"round":6,"budget":0,"problem":"sum_of_digits","domain":"bounded","label":"R7 sum_of_digits (budget=0)","belief":[1,0],"history":[{"iter":1,"phase":"backup","lb":-88.8122,"ub":-88.7},{"iter":27,"phase":"backup","lb":-88.7163,"ub":-88.7}],"children":[]},"1|4|0.1992,0.8008":{"key":"1|4|0.1992,0.8008","depth":1,"partition":4,"round":1,"budget":1,"problem":"is_palindrome","domain":"unbounded","label":"R2 is_palindrome (budget=1)","belief":[0.199177,0.800823],"history":[{"iter":2,"phase":"backup","lb":-47.1696,"ub":-46.6763}],"children":[]},"1|5|0.2500,0.7500":{"key":"1|5|0.2500,0.7500","depth":1,"partition":5,"round":1,"budget":2,"problem":"is_palindrome","domain":"unbounded","label":"R2 is_palindrome (budget=2)","belief":[0.25,0.75],"history":[{"iter":3,"phase":"peek","lb":-52.713,"ub":-47.2758},{"iter":3,"phase":"backup","lb":-48.4202,"ub":-47.2758},{"iter":5,"phase":"peek","lb":-48.3636,"ub":-47.5414},{"iter":5,"phase":"backup","lb":-48.3094,"ub":-47.8201},{"iter":8,"phase":"peek","lb":-48.3094,"ub":-47.8722},{"iter":8,"phase":"backup","lb":-48.3094,"ub":-47.9286},{"iter":16,"phase":"peek","lb":-48.2552,"ub":-47.9969},{"iter":16,"phase":"backup","lb":-48.2548,"ub":-48.0609},{"iter":18,"phase":"peek","lb":-48.2548,"ub":-48.0609},{"iter":18,"phase":"backup","lb":-48.2531,"ub":-48.0609},{"iter":19,"phase":"peek","lb":-48.2531,"ub":-48.0609},{"iter":19,"phase":"backup","lb":-48.2039,"ub":-48.094},{"iter":25,"phase":"peek","lb":-48.2026,"ub":-48.094},{"iter":25,"phase":"backup","lb":-48.2014,"ub":-48.1054},{"iter":27,"phase":"peek","lb":-48.2014,"ub":-48.1054},{"iter":27,"phase":"backup","lb":-48.147,"ub":-48.115}],"children":[{"childKey":"2|7|1.0000,0.0000","action":"Audit","observation":"revealed_attack"},{"childKey":"2|8|0.2500,0.7500","action":"Pass","observation":"none"},{"childKey":"2|7|0.0430,0.9570","action":"Audit","observation":"revealed_honest"},{"childKey":"2|7|0.0425,0.9575","action":"Audit","observation":"revealed_honest"}]},"2|7|1.0000,0.0000":{"key":"2|7|1.0000,0.0000","depth":2,"partition":7,"round":2,"budget":1,"problem":"fibonacci","domain":"bounded","label":"R3 fibonacci (budget=1)","belief":[1,0],"history":[{"iter":3,"phase":"peek","lb":-201.287,"ub":-194.846},{"iter":3,"phase":"backup","lb":-194.937,"ub":-194.846}],"children":[{"childKey":"3|10|1.0000,0.0000","action":"Cheap","observation":"clear"}]},"3|10|1.0000,0.0000":{"key":"3|10|1.0000,0.0000","depth":3,"partition":10,"round":3,"budget":1,"problem":"reverse_string","domain":"unbounded","label":"R4 reverse_string (budget=1)","belief":[1,0],"history":[{"iter":3,"phase":"backup","lb":-161.828,"ub":-161.732}],"children":[]},"1|4|0.0419,0.9581":{"key":"1|4|0.0419,0.9581","depth":1,"partition":4,"round":1,"budget":1,"problem":"is_palindrome","domain":"unbounded","label":"R2 is_palindrome (budget=1)","belief":[0.0419055,0.958095],"history":[{"iter":4,"phase":"peek","lb":-11.1452,"ub":-9.85211},{"iter":4,"phase":"backup","lb":-11.1187,"ub":-10.61}],"children":[{"childKey":"2|7|0.0419,0.9581","action":"Pass","observation":"none"}]},"2|7|0.0419,0.9581":{"key":"2|7|0.0419,0.9581","depth":2,"partition":7,"round":2,"budget":1,"problem":"fibonacci","domain":"bounded","label":"R3 fibonacci (budget=1)","belief":[0.0419055,0.958095],"history":[{"iter":4,"phase":"peek","lb":-9.67862,"ub":-8.35671},{"iter":4,"phase":"backup","lb":-9.52779,"ub":-8.96581}],"children":[{"childKey":"3|10|0.0346,0.9654","action":"Cheap","observation":"clear"}]},"3|10|0.0346,0.9654":{"key":"3|10|0.0346,0.9654","depth":3,"partition":10,"round":3,"budget":1,"problem":"reverse_string","domain":"unbounded","label":"R4 reverse_string (budget=1)","belief":[0.0346236,0.965376],"history":[{"iter":4,"phase":"peek","lb":-6.90568,"ub":-5.68458},{"iter":4,"phase":"backup","lb":-6.84111,"ub":-6.24579}],"children":[{"childKey":"4|13|0.0346,0.9654","action":"Pass","observation":"none"}]},"4|13|0.0346,0.9654":{"key":"4|13|0.0346,0.9654","depth":4,"partition":13,"round":4,"budget":1,"problem":"count_vowels","domain":"unbounded","label":"R5 count_vowels (budget=1)","belief":[0.0346236,0.965376],"history":[{"iter":4,"phase":"peek","lb":-5.48684,"ub":-4.40345},{"iter":4,"phase":"backup","lb":-5.43587,"ub":-4.75222}],"children":[{"childKey":"5|16|0.0346,0.9654","action":"Pass","observation":"none"}]},"5|16|0.0346,0.9654":{"key":"5|16|0.0346,0.9654","depth":5,"partition":16,"round":5,"budget":1,"problem":"is_prime","domain":"bounded","label":"R6 is_prime (budget=1)","belief":[0.0346236,0.965376],"history":[{"iter":4,"phase":"peek","lb":-4.15217,"ub":-3.00599},{"iter":4,"phase":"backup","lb":-4.07615,"ub":-3.18004}],"children":[{"childKey":"6|19|0.0301,0.9699","action":"Cheap","observation":"clear"}]},"6|19|0.0301,0.9699":{"key":"6|19|0.0301,0.9699","depth":6,"partition":19,"round":6,"budget":1,"problem":"sum_of_digits","domain":"bounded","label":"R7 sum_of_digits (budget=1)","belief":[0.0300617,0.969938],"history":[{"iter":4,"phase":"peek","lb":-2.54009,"ub":-1.46109},{"iter":4,"phase":"backup","lb":-2.39883,"ub":-1.46109},{"iter":24,"phase":"backup","lb":-2.40048,"ub":-2.38418}],"children":[{"childKey":"7|22|1.0000,0.0000","action":"Cheap","observation":"flag"}]},"7|22|1.0000,0.0000":{"key":"7|22|1.0000,0.0000","depth":7,"partition":22,"round":7,"budget":1,"problem":"remove_duplicates","domain":"unbounded","label":"R8 remove_duplicates (budget=1)","belief":[1,0],"history":[{"iter":4,"phase":"backup","lb":-1.01716,"ub":-1}],"children":[]},"2|8|0.2500,0.7500":{"key":"2|8|0.2500,0.7500","depth":2,"partition":8,"round":2,"budget":2,"problem":"fibonacci","domain":"bounded","label":"R3 fibonacci (budget=2)","belief":[0.25,0.75],"history":[{"iter":5,"phase":"peek","lb":-40.4266,"ub":-37.8058},{"iter":5,"phase":"backup","lb":-39.627,"ub":-38.757},{"iter":8,"phase":"peek","lb":-39.627,"ub":-38.757},{"iter":8,"phase":"backup","lb":-39.627,"ub":-39.0096},{"iter":16,"phase":"peek","lb":-39.627,"ub":-39.0096},{"iter":16,"phase":"backup","lb":-39.5849,"ub":-39.223},{"iter":18,"phase":"peek","lb":-39.5849,"ub":-39.223},{"iter":18,"phase":"backup","lb":-39.4088,"ub":-39.223},{"iter":25,"phase":"peek","lb":-39.4088,"ub":-39.223},{"iter":25,"phase":"backup","lb":-39.333,"ub":-39.2639}],"children":[{"childKey":"3|11|0.2446,0.7554","action":"Cheap","observation":"clear"},{"childKey":"3|11|0.2147,0.7853","action":"Cheap","observation":"clear"}]},"3|11|0.2446,0.7554":{"key":"3|11|0.2446,0.7554","depth":3,"partition":11,"round":3,"budget":2,"problem":"reverse_string","domain":"unbounded","label":"R4 reverse_string (budget=2)","belief":[0.24457,0.75543],"history":[{"iter":5,"phase":"peek","lb":-30.0938,"ub":-29.2848},{"iter":5,"phase":"backup","lb":-30.0938,"ub":-29.3647}],"children":[{"childKey":"4|14|0.2446,0.7554","action":"Pass","observation":"none"}]},"4|14|0.2446,0.7554":{"key":"4|14|0.2446,0.7554","depth":4,"partition":14,"round":4,"budget":2,"problem":"count_vowels","domain":"unbounded","label":"R5 count_vowels (budget=2)","belief":[0.24457,0.75543],"history":[{"iter":5,"phase":"peek","lb":-20.8183,"ub":-20.1489},{"iter":5,"phase":"backup","lb":-20.8183,"ub":-20.1491}],"children":[{"childKey":"5|16|0.2446,0.7554","action":"Audit","observation":"revealed_honest"}]},"5|16|0.2446,0.7554":{"key":"5|16|0.2446,0.7554","depth":5,"partition":16,"round":5,"budget":1,"problem":"is_prime","domain":"bounded","label":"R6 is_prime (budget=1)","belief":[0.24457,0.75543],"history":[{"iter":5,"phase":"peek","lb":-20.8614,"ub":-20.1641},{"iter":5,"phase":"backup","lb":-20.8614,"ub":-20.1641}],"children":[{"childKey":"6|19|0.2098,0.7902","action":"Cheap","observation":"clear"}]},"6|19|0.2098,0.7902":{"key":"6|19|0.2098,0.7902","depth":6,"partition":19,"round":6,"budget":1,"problem":"sum_of_digits","domain":"bounded","label":"R7 sum_of_digits (budget=1)","belief":[0.209783,0.790217],"history":[{"iter":5,"phase":"peek","lb":-9.7674,"ub":-9.00039},{"iter":5,"phase":"backup","lb":-9.7674,"ub":-9.00039}],"children":[{"childKey":"7|22|0.1788,0.8212","action":"Cheap","observation":"clear"}]},"7|22|0.1788,0.8212":{"key":"7|22|0.1788,0.8212","depth":7,"partition":22,"round":7,"budget":1,"problem":"remove_duplicates","domain":"unbounded","label":"R8 remove_duplicates (budget=1)","belief":[0.178773,0.821227],"history":[{"iter":5,"phase":"backup","lb":-1.01716,"ub":-1}],"children":[]},"1|4|0.0405,0.9595":{"key":"1|4|0.0405,0.9595","depth":1,"partition":4,"round":1,"budget":1,"problem":"is_palindrome","domain":"unbounded","label":"R2 is_palindrome (budget=1)","belief":[0.0405246,0.959475],"history":[{"iter":6,"phase":"peek","lb":-10.8012,"ub":-10.2631},{"iter":6,"phase":"backup","lb":-10.8012,"ub":-10.2933},{"iter":7,"phase":"peek","lb":-10.8012,"ub":-10.2933},{"iter":7,"phase":"backup","lb":-10.6656,"ub":-10.2933}],"children":[{"childKey":"2|7|0.0405,0.9595","action":"Pass","observation":"none"},{"childKey":"2|6|0.0005,0.9995","action":"Audit","observation":"revealed_honest"}]},"2|7|0.0405,0.9595":{"key":"2|7|0.0405,0.9595","depth":2,"partition":7,"round":2,"budget":1,"problem":"fibonacci","domain":"bounded","label":"R3 fibonacci (budget=1)","belief":[0.0405246,0.959475],"history":[{"iter":6,"phase":"peek","lb":-9.26006,"ub":-8.67696},{"iter":6,"phase":"backup","lb":-9.26006,"ub":-8.77511}],"children":[{"childKey":"3|10|0.0335,0.9665","action":"Cheap","observation":"clear"}]},"3|10|0.0335,0.9665":{"key":"3|10|0.0335,0.9665","depth":3,"partition":10,"round":3,"budget":1,"problem":"reverse_string","domain":"unbounded","label":"R4 reverse_string (budget=1)","belief":[0.0334743,0.966526],"history":[{"iter":6,"phase":"peek","lb":-6.65606,"ub":-6.03846},{"iter":6,"phase":"backup","lb":-6.65606,"ub":-6.14254}],"children":[{"childKey":"4|13|0.0335,0.9665","action":"Pass","observation":"none"}]},"4|13|0.0335,0.9665":{"key":"4|13|0.0335,0.9665","depth":4,"partition":13,"round":4,"budget":1,"problem":"count_vowels","domain":"unbounded","label":"R5 count_vowels (budget=1)","belief":[0.0334743,0.966526],"history":[{"iter":6,"phase":"peek","lb":-5.29798,"ub":-4.59447},{"iter":6,"phase":"backup","lb":-5.29798,"ub":-4.70403}],"children":[{"childKey":"5|16|0.0335,0.9665","action":"Pass","observation":"none"}]},"5|16|0.0335,0.9665":{"key":"5|16|0.0335,0.9665","depth":5,"partition":16,"round":5,"budget":1,"problem":"is_prime","domain":"bounded","label":"R6 is_prime (budget=1)","belief":[0.0334743,0.966526],"history":[{"iter":6,"phase":"peek","lb":-3.98426,"ub":-3.08112},{"iter":6,"phase":"backup","lb":-3.98426,"ub":-3.1898}],"children":[{"childKey":"6|19|0.0276,0.9724","action":"Cheap","observation":"clear"}]},"6|19|0.0276,0.9724":{"key":"6|19|0.0276,0.9724","depth":6,"partition":19,"round":6,"budget":1,"problem":"sum_of_digits","domain":"bounded","label":"R7 sum_of_digits (budget=1)","belief":[0.0276154,0.972385],"history":[{"iter":6,"phase":"peek","lb":-2.29853,"ub":-1.45729},{"iter":6,"phase":"backup","lb":-2.29853,"ub":-1.45729}],"children":[{"childKey":"7|22|0.0228,0.9772","action":"Cheap","observation":"clear"}]},"7|22|0.0228,0.9772":{"key":"7|22|0.0228,0.9772","depth":7,"partition":22,"round":7,"budget":1,"problem":"remove_duplicates","domain":"unbounded","label":"R8 remove_duplicates (budget=1)","belief":[0.0227577,0.977242],"history":[{"iter":6,"phase":"backup","lb":-1.01716,"ub":-1}],"children":[]},"2|6|0.0005,0.9995":{"key":"2|6|0.0005,0.9995","depth":2,"partition":6,"round":2,"budget":0,"problem":"fibonacci","domain":"bounded","label":"R3 fibonacci (budget=0)","belief":[0.000459235,0.999541],"history":[{"iter":7,"phase":"backup","lb":-0.469321,"ub":-0.114898}],"children":[]},"3|11|0.2147,0.7853":{"key":"3|11|0.2147,0.7853","depth":3,"partition":11,"round":3,"budget":2,"problem":"reverse_string","domain":"unbounded","label":"R4 reverse_string (budget=2)","belief":[0.21466,0.78534],"history":[{"iter":8,"phase":"peek","lb":-26.6846,"ub":-26.0357},{"iter":8,"phase":"backup","lb":-26.6846,"ub":-26.0519},{"iter":16,"phase":"peek","lb":-26.6382,"ub":-26.1934},{"iter":16,"phase":"backup","lb":-26.6382,"ub":-26.2871},{"iter":18,"phase":"peek","lb":-26.6382,"ub":-26.2871},{"iter":18,"phase":"backup","lb":-26.4766,"ub":-26.2871},{"iter":25,"phase":"peek","lb":-26.44,"ub":-26.3175},{"iter":25,"phase":"backup","lb":-26.3931,"ub":-26.3322}],"children":[{"childKey":"4|13|0.0407,0.9593","action":"Audit","observation":"revealed_honest"},{"childKey":"4|14|0.2147,0.7853","action":"Pass","observation":"none"},{"childKey":"4|13|1.0000,0.0000","action":"Audit","observation":"revealed_attack"},{"childKey":"4|13|0.0464,0.9536","action":"Audit","observation":"revealed_honest"}]},"4|13|0.0407,0.9593":{"key":"4|13|0.0407,0.9593","depth":4,"partition":13,"round":4,"budget":1,"problem":"count_vowels","domain":"unbounded","label":"R5 count_vowels (budget=1)","belief":[0.0407386,0.959261],"history":[{"iter":8,"phase":"peek","lb":-6.16954,"ub":-5.62454},{"iter":8,"phase":"backup","lb":-6.16954,"ub":-5.62454}],"children":[{"childKey":"5|16|0.0407,0.9593","action":"Pass","observation":"none"}]},"5|16|0.0407,0.9593":{"key":"5|16|0.0407,0.9593","depth":5,"partition":16,"round":5,"budget":1,"problem":"is_prime","domain":"bounded","label":"R6 is_prime (budget=1)","belief":[0.0407386,0.959261],"history":[{"iter":8,"phase":"peek","lb":-4.56504,"ub":-3.77643},{"iter":8,"phase":"backup","lb":-4.56504,"ub":-3.77643}],"children":[{"childKey":"6|19|0.0337,0.9663","action":"Cheap","observation":"clear"}]},"6|19|0.0337,0.9663":{"key":"6|19|0.0337,0.9663","depth":6,"partition":19,"round":6,"budget":1,"problem":"sum_of_digits","domain":"bounded","label":"R7 sum_of_digits (budget=1)","belief":[0.0336525,0.966348],"history":[{"iter":8,"phase":"backup","lb":-2.54606,"ub":-2.52975}],"children":[]},"1|4|0.0429,0.9571":{"key":"1|4|0.0429,0.9571","depth":1,"partition":4,"round":1,"budget":1,"problem":"is_palindrome","domain":"unbounded","label":"R2 is_palindrome (budget=1)","belief":[0.0429363,0.957064],"history":[{"iter":9,"phase":"peek","lb":-11.221,"ub":-10.8501},{"iter":9,"phase":"backup","lb":-11.1574,"ub":-10.858}],"children":[{"childKey":"2|6|0.0035,0.9965","action":"Audit","observation":"revealed_honest"}]},"2|6|0.0035,0.9965":{"key":"2|6|0.0035,0.9965","depth":2,"partition":6,"round":2,"budget":0,"problem":"fibonacci","domain":"bounded","label":"R3 fibonacci (budget=0)","belief":[0.00348032,0.99652],"history":[{"iter":9,"phase":"peek","lb":-1.2469,"ub":-0.870761},{"iter":9,"phase":"backup","lb":-1.15584,"ub":-0.870761}],"children":[{"childKey":"3|9|0.0035,0.9965","action":"Pass","observation":"none"}]},"3|9|0.0035,0.9965":{"key":"3|9|0.0035,0.9965","depth":3,"partition":9,"round":3,"budget":0,"problem":"reverse_string","domain":"unbounded","label":"R4 reverse_string (budget=0)","belief":[0.00348032,0.99652],"history":[{"iter":9,"phase":"backup","lb":-1.0335,"ub":-0.733415}],"children":[]},"1|4|0.0441,0.9559":{"key":"1|4|0.0441,0.9559","depth":1,"partition":4,"round":1,"budget":1,"problem":"is_palindrome","domain":"unbounded","label":"R2 is_palindrome (budget=1)","belief":[0.0440651,0.955935],"history":[{"iter":10,"phase":"peek","lb":-11.4174,"ub":-11.1177},{"iter":10,"phase":"backup","lb":-11.3726,"ub":-11.1177}],"children":[{"childKey":"2|6|0.0049,0.9951","action":"Audit","observation":"revealed_honest"}]},"2|6|0.0049,0.9951":{"key":"2|6|0.0049,0.9951","depth":2,"partition":6,"round":2,"budget":0,"problem":"fibonacci","domain":"bounded","label":"R3 fibonacci (budget=0)","belief":[0.00489338,0.995107],"history":[{"iter":10,"phase":"peek","lb":-1.51954,"ub":-1.2243},{"iter":10,"phase":"backup","lb":-1.4519,"ub":-1.2243},{"iter":15,"phase":"peek","lb":-1.44306,"ub":-1.21583},{"iter":15,"phase":"backup","lb":-1.44306,"ub":-1.21583}],"children":[{"childKey":"3|9|0.0049,0.9951","action":"Pass","observation":"none"}]},"3|9|0.0049,0.9951":{"key":"3|9|0.0049,0.9951","depth":3,"partition":9,"round":3,"budget":0,"problem":"reverse_string","domain":"unbounded","label":"R4 reverse_string (budget=0)","belief":[0.00489338,0.995107],"history":[{"iter":10,"phase":"peek","lb":-1.34197,"ub":-1.03119},{"iter":10,"phase":"backup","lb":-1.27077,"ub":-1.03119},{"iter":15,"phase":"peek","lb":-1.26324,"ub":-1.02406},{"iter":15,"phase":"backup","lb":-1.26324,"ub":-1.02406}],"children":[{"childKey":"4|12|0.0049,0.9951","action":"Pass","observation":"none"}]},"4|12|0.0049,0.9951":{"key":"4|12|0.0049,0.9951","depth":4,"partition":12,"round":4,"budget":0,"problem":"count_vowels","domain":"unbounded","label":"R5 count_vowels (budget=0)","belief":[0.00489338,0.995107],"history":[{"iter":10,"phase":"peek","lb":-1.15505,"ub":-0.82792},{"iter":10,"phase":"backup","lb":-1.08011,"ub":-0.82792},{"iter":15,"phase":"backup","lb":-1.07397,"ub":-0.862816}],"children":[{"childKey":"5|15|0.0049,0.9951","action":"Pass","observation":"none"}]},"5|15|0.0049,0.9951":{"key":"5|15|0.0049,0.9951","depth":5,"partition":15,"round":5,"budget":0,"problem":"is_prime","domain":"bounded","label":"R6 is_prime (budget=0)","belief":[0.00489338,0.995107],"history":[{"iter":10,"phase":"backup","lb":-0.879412,"ub":-0.65701}],"children":[]},"1|4|0.0449,0.9551":{"key":"1|4|0.0449,0.9551","depth":1,"partition":4,"round":1,"budget":1,"problem":"is_palindrome","domain":"unbounded","label":"R2 is_palindrome (budget=1)","belief":[0.0448565,0.955144],"history":[{"iter":11,"phase":"peek","lb":-11.5551,"ub":-11.2997},{"iter":11,"phase":"backup","lb":-11.5359,"ub":-11.3041}],"children":[{"childKey":"2|7|0.0449,0.9551","action":"Pass","observation":"none"}]},"2|7|0.0449,0.9551":{"key":"2|7|0.0449,0.9551","depth":2,"partition":7,"round":2,"budget":1,"problem":"fibonacci","domain":"bounded","label":"R3 fibonacci (budget=1)","belief":[0.0448565,0.955144],"history":[{"iter":11,"phase":"peek","lb":-10.1,"ub":-9.61519},{"iter":11,"phase":"backup","lb":-10.0262,"ub":-9.64716}],"children":[{"childKey":"3|10|0.0371,0.9629","action":"Cheap","observation":"clear"}]},"3|10|0.0371,0.9629":{"key":"3|10|0.0371,0.9629","depth":3,"partition":10,"round":3,"budget":1,"problem":"reverse_string","domain":"unbounded","label":"R4 reverse_string (budget=1)","belief":[0.0370817,0.962918],"history":[{"iter":11,"phase":"peek","lb":-7.16981,"ub":-6.75717},{"iter":11,"phase":"backup","lb":-7.15866,"ub":-6.75717}],"children":[{"childKey":"4|13|0.0371,0.9629","action":"Pass","observation":"none"}]},"4|13|0.0371,0.9629":{"key":"4|13|0.0371,0.9629","depth":4,"partition":13,"round":4,"budget":1,"problem":"count_vowels","domain":"unbounded","label":"R5 count_vowels (budget=1)","belief":[0.0370817,0.962918],"history":[{"iter":11,"phase":"peek","lb":-5.66897,"ub":-5.16115},{"iter":11,"phase":"backup","lb":-5.66897,"ub":-5.16115}],"children":[{"childKey":"5|16|0.0371,0.9629","action":"Pass","observation":"none"}]},"5|16|0.0371,0.9629":{"key":"5|16|0.0371,0.9629","depth":5,"partition":16,"round":5,"budget":1,"problem":"is_prime","domain":"bounded","label":"R6 is_prime (budget=1)","belief":[0.0370817,0.962918],"history":[{"iter":11,"phase":"backup","lb":-4.27267,"ub":-4.12469}],"children":[]},"1|4|0.0452,0.9548":{"key":"1|4|0.0452,0.9548","depth":1,"partition":4,"round":1,"budget":1,"problem":"is_palindrome","domain":"unbounded","label":"R2 is_palindrome (budget=1)","belief":[0.0451961,0.954804],"history":[{"iter":12,"phase":"peek","lb":-11.6142,"ub":-11.3822},{"iter":12,"phase":"backup","lb":-11.6142,"ub":-11.3825},{"iter":13,"phase":"peek","lb":-11.6142,"ub":-11.3825},{"iter":13,"phase":"backup","lb":-11.6142,"ub":-11.3825},{"iter":14,"phase":"peek","lb":-11.6142,"ub":-11.3825},{"iter":14,"phase":"backup","lb":-11.6142,"ub":-11.3825},{"iter":15,"phase":"peek","lb":-11.6142,"ub":-11.4039},{"iter":15,"phase":"backup","lb":-11.6142,"ub":-11.4039}],"children":[{"childKey":"2|7|0.0452,0.9548","action":"Pass","observation":"none"},{"childKey":"2|6|0.0049,0.9951","action":"Audit","observation":"revealed_honest"}]},"2|7|0.0452,0.9548":{"key":"2|7|0.0452,0.9548","depth":2,"partition":7,"round":2,"budget":1,"problem":"fibonacci","domain":"bounded","label":"R3 fibonacci (budget=1)","belief":[0.0451961,0.954804],"history":[{"iter":12,"phase":"peek","lb":-10.0922,"ub":-9.713},{"iter":12,"phase":"backup","lb":-10.0922,"ub":-9.71552},{"iter":13,"phase":"peek","lb":-10.0922,"ub":-9.71552},{"iter":13,"phase":"backup","lb":-10.0922,"ub":-9.71552},{"iter":14,"phase":"backup","lb":-10.0922,"ub":-9.90428}],"children":[{"childKey":"3|10|0.0374,0.9626","action":"Cheap","observation":"clear"}]},"3|10|0.0374,0.9626":{"key":"3|10|0.0374,0.9626","depth":3,"partition":10,"round":3,"budget":1,"problem":"reverse_string","domain":"unbounded","label":"R4 reverse_string (budget=1)","belief":[0.0373647,0.962635],"history":[{"iter":12,"phase":"peek","lb":-7.20433,"ub":-6.8054},{"iter":12,"phase":"backup","lb":-7.20433,"ub":-6.8054},{"iter":13,"phase":"backup","lb":-7.20433,"ub":-7.00572}],"children":[{"childKey":"4|13|0.0374,0.9626","action":"Pass","observation":"none"}]},"4|13|0.0374,0.9626":{"key":"4|13|0.0374,0.9626","depth":4,"partition":13,"round":4,"budget":1,"problem":"count_vowels","domain":"unbounded","label":"R5 count_vowels (budget=1)","belief":[0.0373647,0.962635],"history":[{"iter":12,"phase":"backup","lb":-5.70306,"ub":-5.49314}],"children":[]},"4|14|0.2147,0.7853":{"key":"4|14|0.2147,0.7853","depth":4,"partition":14,"round":4,"budget":2,"problem":"count_vowels","domain":"unbounded","label":"R5 count_vowels (budget=2)","belief":[0.21466,0.78534],"history":[{"iter":16,"phase":"peek","lb":-18.5465,"ub":-18.1247},{"iter":16,"phase":"backup","lb":-18.5465,"ub":-18.3277}],"children":[{"childKey":"5|17|0.2147,0.7853","action":"Pass","observation":"none"}]},"5|17|0.2147,0.7853":{"key":"5|17|0.2147,0.7853","depth":5,"partition":17,"round":5,"budget":2,"problem":"is_prime","domain":"bounded","label":"R6 is_prime (budget=2)","belief":[0.21466,0.78534],"history":[{"iter":16,"phase":"peek","lb":-10.469,"ub":-9.3987},{"iter":16,"phase":"backup","lb":-10.4025,"ub":-9.3987}],"children":[{"childKey":"6|20|0.2147,0.7853","action":"Cheap","observation":"clear"}]},"6|20|0.2147,0.7853":{"key":"6|20|0.2147,0.7853","depth":6,"partition":20,"round":6,"budget":2,"problem":"sum_of_digits","domain":"bounded","label":"R7 sum_of_digits (budget=2)","belief":[0.21466,0.78534],"history":[{"iter":16,"phase":"backup","lb":-1.9663,"ub":-1.95}],"children":[]},"1|4|0.0440,0.9560":{"key":"1|4|0.0440,0.9560","depth":1,"partition":4,"round":1,"budget":1,"problem":"is_palindrome","domain":"unbounded","label":"R2 is_palindrome (budget=1)","belief":[0.0439685,0.956032],"history":[{"iter":17,"phase":"peek","lb":-11.3311,"ub":-11.1216},{"iter":17,"phase":"backup","lb":-11.2902,"ub":-11.1468}],"children":[{"childKey":"2|6|0.0048,0.9952","action":"Audit","observation":"revealed_honest"}]},"2|6|0.0048,0.9952":{"key":"2|6|0.0048,0.9952","depth":2,"partition":6,"round":2,"budget":0,"problem":"fibonacci","domain":"bounded","label":"R3 fibonacci (budget=0)","belief":[0.00475704,0.995243],"history":[{"iter":17,"phase":"peek","lb":-1.41629,"ub":-1.19019},{"iter":17,"phase":"backup","lb":-1.35153,"ub":-1.22608}],"children":[{"childKey":"3|9|0.0048,0.9952","action":"Pass","observation":"none"}]},"3|9|0.0048,0.9952":{"key":"3|9|0.0048,0.9952","depth":3,"partition":9,"round":3,"budget":0,"problem":"reverse_string","domain":"unbounded","label":"R4 reverse_string (budget=0)","belief":[0.00475704,0.995243],"history":[{"iter":17,"phase":"peek","lb":-1.24046,"ub":-1.04024},{"iter":17,"phase":"backup","lb":-1.1723,"ub":-1.04024}],"children":[{"childKey":"4|12|0.0048,0.9952","action":"Pass","observation":"none"}]},"4|12|0.0048,0.9952":{"key":"4|12|0.0048,0.9952","depth":4,"partition":12,"round":4,"budget":0,"problem":"count_vowels","domain":"unbounded","label":"R5 count_vowels (budget=0)","belief":[0.00475704,0.995243],"history":[{"iter":17,"phase":"peek","lb":-1.05537,"ub":-0.84462},{"iter":17,"phase":"backup","lb":-0.983627,"ub":-0.84462}],"children":[{"childKey":"5|15|0.0048,0.9952","action":"Pass","observation":"none"}]},"5|15|0.0048,0.9952":{"key":"5|15|0.0048,0.9952","depth":5,"partition":15,"round":5,"budget":0,"problem":"is_prime","domain":"bounded","label":"R6 is_prime (budget=0)","belief":[0.00475704,0.995243],"history":[{"iter":17,"phase":"peek","lb":-0.860549,"ub":-0.638703},{"iter":17,"phase":"backup","lb":-0.785027,"ub":-0.638703}],"children":[{"childKey":"6|18|0.0048,0.9952","action":"Pass","observation":"none"}]},"6|18|0.0048,0.9952":{"key":"6|18|0.0048,0.9952","depth":6,"partition":18,"round":6,"budget":0,"problem":"sum_of_digits","domain":"bounded","label":"R7 sum_of_digits (budget=0)","belief":[0.00475704,0.995243],"history":[{"iter":17,"phase":"backup","lb":-0.575974,"ub":-0.463811}],"children":[]},"4|13|1.0000,0.0000":{"key":"4|13|1.0000,0.0000","depth":4,"partition":13,"round":4,"budget":1,"problem":"count_vowels","domain":"unbounded","label":"R5 count_vowels (budget=1)","belief":[1,0],"history":[{"iter":18,"phase":"backup","lb":-120.293,"ub":-120.192}],"children":[]},"2|7|0.0430,0.9570":{"key":"2|7|0.0430,0.9570","depth":2,"partition":7,"round":2,"budget":1,"problem":"fibonacci","domain":"bounded","label":"R3 fibonacci (budget=1)","belief":[0.0430071,0.956993],"history":[{"iter":19,"phase":"peek","lb":-9.66714,"ub":-9.43428},{"iter":19,"phase":"backup","lb":-9.60018,"ub":-9.49018}],"children":[{"childKey":"3|10|0.0355,0.9645","action":"Cheap","observation":"clear"}]},"3|10|0.0355,0.9645":{"key":"3|10|0.0355,0.9645","depth":3,"partition":10,"round":3,"budget":1,"problem":"reverse_string","domain":"unbounded","label":"R4 reverse_string (budget=1)","belief":[0.035541,0.964459],"history":[{"iter":19,"phase":"peek","lb":-6.85073,"ub":-6.71645},{"iter":19,"phase":"backup","lb":-6.83902,"ub":-6.72307}],"children":[{"childKey":"4|13|0.0355,0.9645","action":"Pass","observation":"none"}]},"4|13|0.0355,0.9645":{"key":"4|13|0.0355,0.9645","depth":4,"partition":13,"round":4,"budget":1,"problem":"count_vowels","domain":"unbounded","label":"R5 count_vowels (budget=1)","belief":[0.035541,0.964459],"history":[{"iter":19,"phase":"peek","lb":-5.43126,"ub":-5.27584},{"iter":19,"phase":"backup","lb":-5.43126,"ub":-5.27584}],"children":[{"childKey":"5|15|0.0059,0.9941","action":"Audit","observation":"revealed_honest"}]},"5|15|0.0059,0.9941":{"key":"5|15|0.0059,0.9941","depth":5,"partition":15,"round":5,"budget":0,"problem":"is_prime","domain":"bounded","label":"R6 is_prime (budget=0)","belief":[0.0059329,0.994067],"history":[{"iter":19,"phase":"backup","lb":-0.952734,"ub":-0.836302}],"children":[]},"1|4|0.0435,0.9565":{"key":"1|4|0.0435,0.9565","depth":1,"partition":4,"round":1,"budget":1,"problem":"is_palindrome","domain":"unbounded","label":"R2 is_palindrome (budget=1)","belief":[0.043545,0.956455],"history":[{"iter":20,"phase":"backup","lb":-11.1728,"ub":-11.057}],"children":[]},"1|4|0.0439,0.9561":{"key":"1|4|0.0439,0.9561","depth":1,"partition":4,"round":1,"budget":1,"problem":"is_palindrome","domain":"unbounded","label":"R2 is_palindrome (budget=1)","belief":[0.0438899,0.95611],"history":[{"iter":21,"phase":"peek","lb":-11.2525,"ub":-11.136},{"iter":21,"phase":"backup","lb":-11.2525,"ub":-11.136},{"iter":22,"phase":"peek","lb":-11.2525,"ub":-11.136},{"iter":22,"phase":"backup","lb":-11.2525,"ub":-11.136},{"iter":23,"phase":"peek","lb":-11.2525,"ub":-11.136},{"iter":23,"phase":"backup","lb":-11.2525,"ub":-11.136},{"iter":24,"phase":"peek","lb":-11.2525,"ub":-11.156},{"iter":24,"phase":"backup","lb":-11.252,"ub":-11.1596}],"children":[{"childKey":"2|6|0.0047,0.9953","action":"Audit","observation":"revealed_honest"},{"childKey":"2|7|0.0439,0.9561","action":"Pass","observation":"none"}]},"2|6|0.0047,0.9953":{"key":"2|6|0.0047,0.9953","depth":2,"partition":6,"round":2,"budget":0,"problem":"fibonacci","domain":"bounded","label":"R3 fibonacci (budget=0)","belief":[0.00468948,0.995311],"history":[{"iter":21,"phase":"peek","lb":-1.33364,"ub":-1.20867},{"iter":21,"phase":"backup","lb":-1.33364,"ub":-1.20867},{"iter":22,"phase":"peek","lb":-1.33364,"ub":-1.20867},{"iter":22,"phase":"backup","lb":-1.33364,"ub":-1.20867},{"iter":23,"phase":"backup","lb":-1.33364,"ub":-1.23559},{"iter":26,"phase":"peek","lb":-1.32594,"ub":-1.22793},{"iter":26,"phase":"backup","lb":-1.24787,"ub":-1.22793}],"children":[{"childKey":"3|9|0.0047,0.9953","action":"Pass","observation":"none"}]},"3|9|0.0047,0.9953":{"key":"3|9|0.0047,0.9953","depth":3,"partition":9,"round":3,"budget":0,"problem":"reverse_string","domain":"unbounded","label":"R4 reverse_string (budget=0)","belief":[0.00468948,0.995311],"history":[{"iter":21,"phase":"peek","lb":-1.15701,"ub":-1.02547},{"iter":21,"phase":"backup","lb":-1.15701,"ub":-1.02547},{"iter":22,"phase":"backup","lb":-1.15701,"ub":-1.0538},{"iter":26,"phase":"peek","lb":-1.15044,"ub":-1.04728},{"iter":26,"phase":"backup","lb":-1.06826,"ub":-1.04728}],"children":[{"childKey":"4|12|0.0047,0.9953","action":"Pass","observation":"none"}]},"4|12|0.0047,0.9953":{"key":"4|12|0.0047,0.9953","depth":4,"partition":12,"round":4,"budget":0,"problem":"count_vowels","domain":"unbounded","label":"R5 count_vowels (budget=0)","belief":[0.00468948,0.995311],"history":[{"iter":21,"phase":"backup","lb":-0.971096,"ub":-0.862452},{"iter":26,"phase":"backup","lb":-0.879196,"ub":-0.864481}],"children":[]},"2|7|0.0439,0.9561":{"key":"2|7|0.0439,0.9561","depth":2,"partition":7,"round":2,"budget":1,"problem":"fibonacci","domain":"bounded","label":"R3 fibonacci (budget=1)","belief":[0.0438899,0.95611],"history":[{"iter":24,"phase":"peek","lb":-9.77183,"ub":-9.66115},{"iter":24,"phase":"backup","lb":-9.76998,"ub":-9.6751}],"children":[{"childKey":"3|10|0.0363,0.9637","action":"Cheap","observation":"clear"}]},"3|10|0.0363,0.9637":{"key":"3|10|0.0363,0.9637","depth":3,"partition":10,"round":3,"budget":1,"problem":"reverse_string","domain":"unbounded","label":"R4 reverse_string (budget=1)","belief":[0.0362763,0.963724],"history":[{"iter":24,"phase":"peek","lb":-6.95791,"ub":-6.84789},{"iter":24,"phase":"backup","lb":-6.95595,"ub":-6.85604}],"children":[{"childKey":"4|13|0.0363,0.9637","action":"Pass","observation":"none"}]},"4|13|0.0363,0.9637":{"key":"4|13|0.0363,0.9637","depth":4,"partition":13,"round":4,"budget":1,"problem":"count_vowels","domain":"unbounded","label":"R5 count_vowels (budget=1)","belief":[0.0362763,0.963724],"history":[{"iter":24,"phase":"peek","lb":-5.52012,"ub":-5.39737},{"iter":24,"phase":"backup","lb":-5.51141,"ub":-5.40274}],"children":[{"childKey":"5|16|0.0363,0.9637","action":"Pass","observation":"none"}]},"5|16|0.0363,0.9637":{"key":"5|16|0.0363,0.9637","depth":5,"partition":16,"round":5,"budget":1,"problem":"is_prime","domain":"bounded","label":"R6 is_prime (budget=1)","belief":[0.0362763,0.963724],"history":[{"iter":24,"phase":"peek","lb":-4.17098,"ub":-4.05994},{"iter":24,"phase":"backup","lb":-4.17098,"ub":-4.05994}],"children":[{"childKey":"6|19|0.0301,0.9699","action":"Cheap","observation":"clear"}]},"4|13|0.0464,0.9536":{"key":"4|13|0.0464,0.9536","depth":4,"partition":13,"round":4,"budget":1,"problem":"count_vowels","domain":"unbounded","label":"R5 count_vowels (budget=1)","belief":[0.0464364,0.953564],"history":[{"iter":25,"phase":"peek","lb":-6.7478,"ub":-6.61861},{"iter":25,"phase":"backup","lb":-6.68506,"ub":-6.6374}],"children":[{"childKey":"5|15|0.0071,0.9929","action":"Audit","observation":"revealed_honest"}]},"5|15|0.0071,0.9929":{"key":"5|15|0.0071,0.9929","depth":5,"partition":15,"round":5,"budget":0,"problem":"is_prime","domain":"bounded","label":"R6 is_prime (budget=0)","belief":[0.00713704,0.992863],"history":[{"iter":25,"phase":"peek","lb":-1.12447,"ub":-0.997928},{"iter":25,"phase":"backup","lb":-1.03341,"ub":-1.01792}],"children":[{"childKey":"6|18|0.0071,0.9929","action":"Pass","observation":"none"}]},"6|18|0.0071,0.9929":{"key":"6|18|0.0071,0.9929","depth":6,"partition":18,"round":6,"budget":0,"problem":"sum_of_digits","domain":"bounded","label":"R7 sum_of_digits (budget=0)","belief":[0.00713704,0.992863],"history":[{"iter":25,"phase":"peek","lb":-0.808024,"ub":-0.695861},{"iter":25,"phase":"backup","lb":-0.712166,"ub":-0.695861}],"children":[{"childKey":"7|21|0.0071,0.9929","action":"Pass","observation":"none"}]},"7|21|0.0071,0.9929":{"key":"7|21|0.0071,0.9929","depth":7,"partition":21,"round":7,"budget":0,"problem":"remove_duplicates","domain":"unbounded","label":"R8 remove_duplicates (budget=0)","belief":[0.00713704,0.992863],"history":[{"iter":25,"phase":"backup","lb":-0.374015,"ub":-0.356852}],"children":[]},"1|4|0.0438,0.9562":{"key":"1|4|0.0438,0.9562","depth":1,"partition":4,"round":1,"budget":1,"problem":"is_palindrome","domain":"unbounded","label":"R2 is_palindrome (budget=1)","belief":[0.0438431,0.956157],"history":[{"iter":26,"phase":"peek","lb":-11.2411,"ub":-11.1489},{"iter":26,"phase":"backup","lb":-11.1918,"ub":-11.1489}],"children":[{"childKey":"2|6|0.0047,0.9953","action":"Audit","observation":"revealed_honest"}]},"2|7|0.0425,0.9575":{"key":"2|7|0.0425,0.9575","depth":2,"partition":7,"round":2,"budget":1,"problem":"fibonacci","domain":"bounded","label":"R3 fibonacci (budget=1)","belief":[0.0425114,0.957489],"history":[{"iter":27,"phase":"peek","lb":-9.50175,"ub":-9.3831},{"iter":27,"phase":"backup","lb":-9.42741,"ub":-9.41094}],"children":[{"childKey":"3|10|0.0351,0.9649","action":"Cheap","observation":"clear"}]},"3|10|0.0351,0.9649":{"key":"3|10|0.0351,0.9649","depth":3,"partition":10,"round":3,"budget":1,"problem":"reverse_string","domain":"unbounded","label":"R4 reverse_string (budget=1)","belief":[0.0351282,0.964872],"history":[{"iter":27,"phase":"peek","lb":-6.69518,"ub":-6.66523},{"iter":27,"phase":"backup","lb":-6.69124,"ub":-6.67451}],"children":[{"childKey":"4|13|0.0351,0.9649","action":"Pass","observation":"none"}]},"4|13|0.0351,0.9649":{"key":"4|13|0.0351,0.9649","depth":4,"partition":13,"round":4,"budget":1,"problem":"count_vowels","domain":"unbounded","label":"R5 count_vowels (budget=1)","belief":[0.0351282,0.964872],"history":[{"iter":27,"phase":"peek","lb":-5.30833,"ub":-5.26181},{"iter":27,"phase":"backup","lb":-5.29073,"ub":-5.27307}],"children":[{"childKey":"5|16|0.0351,0.9649","action":"Pass","observation":"none"}]},"5|16|0.0351,0.9649":{"key":"5|16|0.0351,0.9649","depth":5,"partition":16,"round":5,"budget":1,"problem":"is_prime","domain":"bounded","label":"R6 is_prime (budget=1)","belief":[0.0351282,0.964872],"history":[{"iter":27,"phase":"peek","lb":-4.00188,"ub":-3.97966},{"iter":27,"phase":"backup","lb":-3.99943,"ub":-3.97966}],"children":[{"childKey":"6|18|1.0000,0.0000","action":"Audit","observation":"revealed_attack"}]}},"trials":[{"iter":0,"steps":[{"depth":0,"partition":2,"round":0,"budget":2,"problem":"find_maximum","belief":[0.25,0.75],"action":"Audit","observation":"revealed_attack"},{"depth":1,"partition":4,"round":1,"budget":1,"problem":"is_palindrome","belief":[1,0],"action":"Audit","observation":"revealed_attack"},{"depth":2,"partition":6,"round":2,"budget":0,"problem":"fibonacci","belief":[1,0],"action":null,"observation":null}]},{"iter":1,"steps":[{"depth":0,"partition":2,"round":0,"budget":2,"problem":"find_maximum","belief":[0.25,0.75],"action":"Audit","observation":"revealed_attack"},{"depth":1,"partition":4,"round":1,"budget":1,"problem":"is_palindrome","belief":[1,0],"action":"Audit","observation":"revealed_attack"},{"depth":2,"partition":6,"round":2,"budget":0,"problem":"fibonacci","belief":[1,0],"action":"Cheap","observation":"clear"},{"depth":3,"partition":9,"round":3,"budget":0,"problem":"reverse_string","belief":[1,0],"action":"Pass","observation":"none"},{"depth":4,"partition":12,"round":4,"budget":0,"problem":"count_vowels","belief":[1,0],"action":"Pass","observation":"none"},{"depth":5,"partition":15,"round":5,"budget":0,"problem":"is_prime","belief":[1,0],"action":"Cheap","observation":"clear"},{"depth":6,"partition":18,"round":6,"budget":0,"problem":"sum_of_digits","belief":[1,0],"action":null,"observation":null}]},{"iter":2,"steps":[{"depth":0,"partition":2,"round":0,"budget":2,"problem":"find_maximum","belief":[0.25,0.75],"action":"Audit","observation":"revealed_honest"},{"depth":1,"partition":4,"round":1,"budget":1,"problem":"is_palindrome","belief":[0.199177,0.800823],"action":null,"observation":null}]},{"iter":3,"steps":[{"depth":0,"partition":2,"round":0,"budget":2,"problem":"find_maximum","belief":[0.25,0.75],"action":"Pass","observation":"none"},{"depth":1,"partition":5,"round":1,"budget":2,"problem":"is_palindrome","belief":[0.25,0.75],"action":"Audit","observation":"revealed_attack"},{"depth":2,"partition":7,"round":2,"budget":1,"problem":"fibonacci","belief":[1,0],"action":"Cheap","observation":"clear"},{"depth":3,"partition":10,"round":3,"budget":1,"problem":"reverse_string","belief":[1,0],"action":null,"observation":null}]},{"iter":4,"steps":[{"depth":0,"partition":2,"round":0,"budget":2,"problem":"find_maximum","belief":[0.25,0.75],"action":"Audit","observation":"revealed_honest"},{"depth":1,"partition":4,"round":1,"budget":1,"problem":"is_palindrome","belief":[0.0419055,0.958095],"action":"Pass","observation":"none"},{"depth":2,"partition":7,"round":2,"budget":1,"problem":"fibonacci","belief":[0.0419055,0.958095],"action":"Cheap","observation":"clear"},{"depth":3,"partition":10,"round":3,"budget":1,"problem":"reverse_string","belief":[0.0346236,0.965376],"action":"Pass","observation":"none"},{"depth":4,"partition":13,"round":4,"budget":1,"problem":"count_vowels","belief":[0.0346236,0.965376],"action":"Pass","observation":"none"},{"depth":5,"partition":16,"round":5,"budget":1,"problem":"is_prime","belief":[0.0346236,0.965376],"action":"Cheap","observation":"clear"},{"depth":6,"partition":19,"round":6,"budget":1,"problem":"sum_of_digits","belief":[0.0300617,0.969938],"action":"Cheap","observation":"flag"},{"depth":7,"partition":22,"round":7,"budget":1,"problem":"remove_duplicates","belief":[1,0],"action":null,"observation":null}]},{"iter":5,"steps":[{"depth":0,"partition":2,"round":0,"budget":2,"problem":"find_maximum","belief":[0.25,0.75],"action":"Pass","observation":"none"},{"depth":1,"partition":5,"round":1,"budget":2,"problem":"is_palindrome","belief":[0.25,0.75],"action":"Pass","observation":"none"},{"depth":2,"partition":8,"round":2,"budget":2,"problem":"fibonacci","belief":[0.25,0.75],"action":"Cheap","observation":"clear"},{"depth":3,"partition":11,"round":3,"budget":2,"problem":"reverse_string","belief":[0.24457,0.75543],"action":"Pass","observation":"none"},{"depth":4,"partition":14,"round":4,"budget":2,"problem":"count_vowels","belief":[0.24457,0.75543],"action":"Audit","observation":"revealed_honest"},{"depth":5,"partition":16,"round":5,"budget":1,"problem":"is_prime","belief":[0.24457,0.75543],"action":"Cheap","observation":"clear"},{"depth":6,"partition":19,"round":6,"budget":1,"problem":"sum_of_digits","belief":[0.209783,0.790217],"action":"Cheap","observation":"clear"},{"depth":7,"partition":22,"round":7,"budget":1,"problem":"remove_duplicates","belief":[0.178773,0.821227],"action":null,"observation":null}]},{"iter":6,"steps":[{"depth":0,"partition":2,"round":0,"budget":2,"problem":"find_maximum","belief":[0.25,0.75],"action":"Audit","observation":"revealed_honest"},{"depth":1,"partition":4,"round":1,"budget":1,"problem":"is_palindrome","belief":[0.0405246,0.959475],"action":"Pass","observation":"none"},{"depth":2,"partition":7,"round":2,"budget":1,"problem":"fibonacci","belief":[0.0405246,0.959475],"action":"Cheap","observation":"clear"},{"depth":3,"partition":10,"round":3,"budget":1,"problem":"reverse_string","belief":[0.0334743,0.966526],"action":"Pass","observation":"none"},{"depth":4,"partition":13,"round":4,"budget":1,"problem":"count_vowels","belief":[0.0334743,0.966526],"action":"Pass","observation":"none"},{"depth":5,"partition":16,"round":5,"budget":1,"problem":"is_prime","belief":[0.0334743,0.966526],"action":"Cheap","observation":"clear"},{"depth":6,"partition":19,"round":6,"budget":1,"problem":"sum_of_digits","belief":[0.0276154,0.972385],"action":"Cheap","observation":"clear"},{"depth":7,"partition":22,"round":7,"budget":1,"problem":"remove_duplicates","belief":[0.0227577,0.977242],"action":null,"observation":null}]},{"iter":7,"steps":[{"depth":0,"partition":2,"round":0,"budget":2,"problem":"find_maximum","belief":[0.25,0.75],"action":"Audit","observation":"revealed_honest"},{"depth":1,"partition":4,"round":1,"budget":1,"problem":"is_palindrome","belief":[0.0405246,0.959475],"action":"Audit","observation":"revealed_honest"},{"depth":2,"partition":6,"round":2,"budget":0,"problem":"fibonacci","belief":[0.000459235,0.999541],"action":null,"observation":null}]},{"iter":8,"steps":[{"depth":0,"partition":2,"round":0,"budget":2,"problem":"find_maximum","belief":[0.25,0.75],"action":"Pass","observation":"none"},{"depth":1,"partition":5,"round":1,"budget":2,"problem":"is_palindrome","belief":[0.25,0.75],"action":"Pass","observation":"none"},{"depth":2,"partition":8,"round":2,"budget":2,"problem":"fibonacci","belief":[0.25,0.75],"action":"Cheap","observation":"clear"},{"depth":3,"partition":11,"round":3,"budget":2,"problem":"reverse_string","belief":[0.21466,0.78534],"action":"Audit","observation":"revealed_honest"},{"depth":4,"partition":13,"round":4,"budget":1,"problem":"count_vowels","belief":[0.0407386,0.959261],"action":"Pass","observation":"none"},{"depth":5,"partition":16,"round":5,"budget":1,"problem":"is_prime","belief":[0.0407386,0.959261],"action":"Cheap","observation":"clear"},{"depth":6,"partition":19,"round":6,"budget":1,"problem":"sum_of_digits","belief":[0.0336525,0.966348],"action":null,"observation":null}]},{"iter":9,"steps":[{"depth":0,"partition":2,"round":0,"budget":2,"problem":"find_maximum","belief":[0.25,0.75],"action":"Audit","observation":"revealed_honest"},{"depth":1,"partition":4,"round":1,"budget":1,"problem":"is_palindrome","belief":[0.0429363,0.957064],"action":"Audit","observation":"revealed_honest"},{"depth":2,"partition":6,"round":2,"budget":0,"problem":"fibonacci","belief":[0.00348032,0.99652],"action":"Pass","observation":"none"},{"depth":3,"partition":9,"round":3,"budget":0,"problem":"reverse_string","belief":[0.00348032,0.99652],"action":null,"observation":null}]},{"iter":10,"steps":[{"depth":0,"partition":2,"round":0,"budget":2,"problem":"find_maximum","belief":[0.25,0.75],"action":"Audit","observation":"revealed_honest"},{"depth":1,"partition":4,"round":1,"budget":1,"problem":"is_palindrome","belief":[0.0440651,0.955935],"action":"Audit","observation":"revealed_honest"},{"depth":2,"partition":6,"round":2,"budget":0,"problem":"fibonacci","belief":[0.00489338,0.995107],"action":"Pass","observation":"none"},{"depth":3,"partition":9,"round":3,"budget":0,"problem":"reverse_string","belief":[0.00489338,0.995107],"action":"Pass","observation":"none"},{"depth":4,"partition":12,"round":4,"budget":0,"problem":"count_vowels","belief":[0.00489338,0.995107],"action":"Pass","observation":"none"},{"depth":5,"partition":15,"round":5,"budget":0,"problem":"is_prime","belief":[0.00489338,0.995107],"action":null,"observation":null}]},{"iter":11,"steps":[{"depth":0,"partition":2,"round":0,"budget":2,"problem":"find_maximum","belief":[0.25,0.75],"action":"Audit","observation":"revealed_honest"},{"depth":1,"partition":4,"round":1,"budget":1,"problem":"is_palindrome","belief":[0.0448565,0.955144],"action":"Pass","observation":"none"},{"depth":2,"partition":7,"round":2,"budget":1,"problem":"fibonacci","belief":[0.0448565,0.955144],"action":"Cheap","observation":"clear"},{"depth":3,"partition":10,"round":3,"budget":1,"problem":"reverse_string","belief":[0.0370817,0.962918],"action":"Pass","observation":"none"},{"depth":4,"partition":13,"round":4,"budget":1,"problem":"count_vowels","belief":[0.0370817,0.962918],"action":"Pass","observation":"none"},{"depth":5,"partition":16,"round":5,"budget":1,"problem":"is_prime","belief":[0.0370817,0.962918],"action":null,"observation":null}]},{"iter":12,"steps":[{"depth":0,"partition":2,"round":0,"budget":2,"problem":"find_maximum","belief":[0.25,0.75],"action":"Audit","observation":"revealed_honest"},{"depth":1,"partition":4,"round":1,"budget":1,"problem":"is_palindrome","belief":[0.0451961,0.954804],"action":"Pass","observation":"none"},{"depth":2,"partition":7,"round":2,"budget":1,"problem":"fibonacci","belief":[0.0451961,0.954804],"action":"Cheap","observation":"clear"},{"depth":3,"partition":10,"round":3,"budget":1,"problem":"reverse_string","belief":[0.0373647,0.962635],"action":"Pass","observation":"none"},{"depth":4,"partition":13,"round":4,"budget":1,"problem":"count_vowels","belief":[0.0373647,0.962635],"action":null,"observation":null}]},{"iter":13,"steps":[{"depth":0,"partition":2,"round":0,"budget":2,"problem":"find_maximum","belief":[0.25,0.75],"action":"Audit","observation":"revealed_honest"},{"depth":1,"partition":4,"round":1,"budget":1,"problem":"is_palindrome","belief":[0.0451961,0.954804],"action":"Pass","observation":"none"},{"depth":2,"partition":7,"round":2,"budget":1,"problem":"fibonacci","belief":[0.0451961,0.954804],"action":"Cheap","observation":"clear"},{"depth":3,"partition":10,"round":3,"budget":1,"problem":"reverse_string","belief":[0.0373647,0.962635],"action":null,"observation":null}]},{"iter":14,"steps":[{"depth":0,"partition":2,"round":0,"budget":2,"problem":"find_maximum","belief":[0.25,0.75],"action":"Audit","observation":"revealed_honest"},{"depth":1,"partition":4,"round":1,"budget":1,"problem":"is_palindrome","belief":[0.0451961,0.954804],"action":"Pass","observation":"none"},{"depth":2,"partition":7,"round":2,"budget":1,"problem":"fibonacci","belief":[0.0451961,0.954804],"action":null,"observation":null}]},{"iter":15,"steps":[{"depth":0,"partition":2,"round":0,"budget":2,"problem":"find_maximum","belief":[0.25,0.75],"action":"Audit","observation":"revealed_honest"},{"depth":1,"partition":4,"round":1,"budget":1,"problem":"is_palindrome","belief":[0.0451961,0.954804],"action":"Audit","observation":"revealed_honest"},{"depth":2,"partition":6,"round":2,"budget":0,"problem":"fibonacci","belief":[0.00485952,0.99514],"action":"Pass","observation":"none"},{"depth":3,"partition":9,"round":3,"budget":0,"problem":"reverse_string","belief":[0.00485952,0.99514],"action":"Pass","observation":"none"},{"depth":4,"partition":12,"round":4,"budget":0,"problem":"count_vowels","belief":[0.00485952,0.99514],"action":null,"observation":null}]},{"iter":16,"steps":[{"depth":0,"partition":2,"round":0,"budget":2,"problem":"find_maximum","belief":[0.25,0.75],"action":"Pass","observation":"none"},{"depth":1,"partition":5,"round":1,"budget":2,"problem":"is_palindrome","belief":[0.25,0.75],"action":"Pass","observation":"none"},{"depth":2,"partition":8,"round":2,"budget":2,"problem":"fibonacci","belief":[0.25,0.75],"action":"Cheap","observation":"clear"},{"depth":3,"partition":11,"round":3,"budget":2,"problem":"reverse_string","belief":[0.21466,0.78534],"action":"Pass","observation":"none"},{"depth":4,"partition":14,"round":4,"budget":2,"problem":"count_vowels","belief":[0.21466,0.78534],"action":"Pass","observation":"none"},{"depth":5,"partition":17,"round":5,"budget":2,"problem":"is_prime","belief":[0.21466,0.78534],"action":"Cheap","observation":"clear"},{"depth":6,"partition":20,"round":6,"budget":2,"problem":"sum_of_digits","belief":[0.21466,0.78534],"action":null,"observation":null}]},{"iter":17,"steps":[{"depth":0,"partition":2,"round":0,"budget":2,"problem":"find_maximum","belief":[0.25,0.75],"action":"Audit","observation":"revealed_honest"},{"depth":1,"partition":4,"round":1,"budget":1,"problem":"is_palindrome","belief":[0.0439685,0.956032],"action":"Audit","observation":"revealed_honest"},{"depth":2,"partition":6,"round":2,"budget":0,"problem":"fibonacci","belief":[0.00475704,0.995243],"action":"Pass","observation":"none"},{"depth":3,"partition":9,"round":3,"budget":0,"problem":"reverse_string","belief":[0.00475704,0.995243],"action":"Pass","observation":"none"},{"depth":4,"partition":12,"round":4,"budget":0,"problem":"count_vowels","belief":[0.00475704,0.995243],"action":"Pass","observation":"none"},{"depth":5,"partition":15,"round":5,"budget":0,"problem":"is_prime","belief":[0.00475704,0.995243],"action":"Pass","observation":"none"},{"depth":6,"partition":18,"round":6,"budget":0,"problem":"sum_of_digits","belief":[0.00475704,0.995243],"action":null,"observation":null}]},{"iter":18,"steps":[{"depth":0,"partition":2,"round":0,"budget":2,"problem":"find_maximum","belief":[0.25,0.75],"action":"Pass","observation":"none"},{"depth":1,"partition":5,"round":1,"budget":2,"problem":"is_palindrome","belief":[0.25,0.75],"action":"Pass","observation":"none"},{"depth":2,"partition":8,"round":2,"budget":2,"problem":"fibonacci","belief":[0.25,0.75],"action":"Cheap","observation":"clear"},{"depth":3,"partition":11,"round":3,"budget":2,"problem":"reverse_string","belief":[0.21466,0.78534],"action":"Audit","observation":"revealed_attack"},{"depth":4,"partition":13,"round":4,"budget":1,"problem":"count_vowels","belief":[1,0],"action":null,"observation":null}]},{"iter":19,"steps":[{"depth":0,"partition":2,"round":0,"budget":2,"problem":"find_maximum","belief":[0.25,0.75],"action":"Pass","observation":"none"},{"depth":1,"partition":5,"round":1,"budget":2,"problem":"is_palindrome","belief":[0.25,0.75],"action":"Audit","observation":"revealed_honest"},{"depth":2,"partition":7,"round":2,"budget":1,"problem":"fibonacci","belief":[0.0430071,0.956993],"action":"Cheap","observation":"clear"},{"depth":3,"partition":10,"round":3,"budget":1,"problem":"reverse_string","belief":[0.035541,0.964459],"action":"Pass","observation":"none"},{"depth":4,"partition":13,"round":4,"budget":1,"problem":"count_vowels","belief":[0.035541,0.964459],"action":"Audit","observation":"revealed_honest"},{"depth":5,"partition":15,"round":5,"budget":0,"problem":"is_prime","belief":[0.0059329,0.994067],"action":null,"observation":null}]},{"iter":20,"steps":[{"depth":0,"partition":2,"round":0,"budget":2,"problem":"find_maximum","belief":[0.25,0.75],"action":"Audit","observation":"revealed_honest"},{"depth":1,"partition":4,"round":1,"budget":1,"problem":"is_palindrome","belief":[0.043545,0.956455],"action":null,"observation":null}]},{"iter":21,"steps":[{"depth":0,"partition":2,"round":0,"budget":2,"problem":"find_maximum","belief":[0.25,0.75],"action":"Audit","observation":"revealed_honest"},{"depth":1,"partition":4,"round":1,"budget":1,"problem":"is_palindrome","belief":[0.0438899,0.95611],"action":"Audit","observation":"revealed_honest"},{"depth":2,"partition":6,"round":2,"budget":0,"problem":"fibonacci","belief":[0.00468948,0.995311],"action":"Pass","observation":"none"},{"depth":3,"partition":9,"round":3,"budget":0,"problem":"reverse_string","belief":[0.00468948,0.995311],"action":"Pass","observation":"none"},{"depth":4,"partition":12,"round":4,"budget":0,"problem":"count_vowels","belief":[0.00468948,0.995311],"action":null,"observation":null}]},{"iter":22,"steps":[{"depth":0,"partition":2,"round":0,"budget":2,"problem":"find_maximum","belief":[0.25,0.75],"action":"Audit","observation":"revealed_honest"},{"depth":1,"partition":4,"round":1,"budget":1,"problem":"is_palindrome","belief":[0.0438899,0.95611],"action":"Audit","observation":"revealed_honest"},{"depth":2,"partition":6,"round":2,"budget":0,"problem":"fibonacci","belief":[0.00468948,0.995311],"action":"Pass","observation":"none"},{"depth":3,"partition":9,"round":3,"budget":0,"problem":"reverse_string","belief":[0.00468948,0.995311],"action":null,"observation":null}]},{"iter":23,"steps":[{"depth":0,"partition":2,"round":0,"budget":2,"problem":"find_maximum","belief":[0.25,0.75],"action":"Audit","observation":"revealed_honest"},{"depth":1,"partition":4,"round":1,"budget":1,"problem":"is_palindrome","belief":[0.0438899,0.95611],"action":"Audit","observation":"revealed_honest"},{"depth":2,"partition":6,"round":2,"budget":0,"problem":"fibonacci","belief":[0.00468948,0.995311],"action":null,"observation":null}]},{"iter":24,"steps":[{"depth":0,"partition":2,"round":0,"budget":2,"problem":"find_maximum","belief":[0.25,0.75],"action":"Audit","observation":"revealed_honest"},{"depth":1,"partition":4,"round":1,"budget":1,"problem":"is_palindrome","belief":[0.0438899,0.95611],"action":"Pass","observation":"none"},{"depth":2,"partition":7,"round":2,"budget":1,"problem":"fibonacci","belief":[0.0438899,0.95611],"action":"Cheap","observation":"clear"},{"depth":3,"partition":10,"round":3,"budget":1,"problem":"reverse_string","belief":[0.0362763,0.963724],"action":"Pass","observation":"none"},{"depth":4,"partition":13,"round":4,"budget":1,"problem":"count_vowels","belief":[0.0362763,0.963724],"action":"Pass","observation":"none"},{"depth":5,"partition":16,"round":5,"budget":1,"problem":"is_prime","belief":[0.0362763,0.963724],"action":"Cheap","observation":"clear"},{"depth":6,"partition":19,"round":6,"budget":1,"problem":"sum_of_digits","belief":[0.0301019,0.969898],"action":null,"observation":null}]},{"iter":25,"steps":[{"depth":0,"partition":2,"round":0,"budget":2,"problem":"find_maximum","belief":[0.25,0.75],"action":"Pass","observation":"none"},{"depth":1,"partition":5,"round":1,"budget":2,"problem":"is_palindrome","belief":[0.25,0.75],"action":"Pass","observation":"none"},{"depth":2,"partition":8,"round":2,"budget":2,"problem":"fibonacci","belief":[0.25,0.75],"action":"Cheap","observation":"clear"},{"depth":3,"partition":11,"round":3,"budget":2,"problem":"reverse_string","belief":[0.21466,0.78534],"action":"Audit","observation":"revealed_honest"},{"depth":4,"partition":13,"round":4,"budget":1,"problem":"count_vowels","belief":[0.0464364,0.953564],"action":"Audit","observation":"revealed_honest"},{"depth":5,"partition":15,"round":5,"budget":0,"problem":"is_prime","belief":[0.00713704,0.992863],"action":"Pass","observation":"none"},{"depth":6,"partition":18,"round":6,"budget":0,"problem":"sum_of_digits","belief":[0.00713704,0.992863],"action":"Pass","observation":"none"},{"depth":7,"partition":21,"round":7,"budget":0,"problem":"remove_duplicates","belief":[0.00713704,0.992863],"action":null,"observation":null}]},{"iter":26,"steps":[{"depth":0,"partition":2,"round":0,"budget":2,"problem":"find_maximum","belief":[0.25,0.75],"action":"Audit","observation":"revealed_honest"},{"depth":1,"partition":4,"round":1,"budget":1,"problem":"is_palindrome","belief":[0.0438431,0.956157],"action":"Audit","observation":"revealed_honest"},{"depth":2,"partition":6,"round":2,"budget":0,"problem":"fibonacci","belief":[0.00466043,0.99534],"action":"Pass","observation":"none"},{"depth":3,"partition":9,"round":3,"budget":0,"problem":"reverse_string","belief":[0.00466043,0.99534],"action":"Pass","observation":"none"},{"depth":4,"partition":12,"round":4,"budget":0,"problem":"count_vowels","belief":[0.00466043,0.99534],"action":null,"observation":null}]},{"iter":27,"steps":[{"depth":0,"partition":2,"round":0,"budget":2,"problem":"find_maximum","belief":[0.25,0.75],"action":"Pass","observation":"none"},{"depth":1,"partition":5,"round":1,"budget":2,"problem":"is_palindrome","belief":[0.25,0.75],"action":"Audit","observation":"revealed_honest"},{"depth":2,"partition":7,"round":2,"budget":1,"problem":"fibonacci","belief":[0.0425114,0.957489],"action":"Cheap","observation":"clear"},{"depth":3,"partition":10,"round":3,"budget":1,"problem":"reverse_string","belief":[0.0351282,0.964872],"action":"Pass","observation":"none"},{"depth":4,"partition":13,"round":4,"budget":1,"problem":"count_vowels","belief":[0.0351282,0.964872],"action":"Pass","observation":"none"},{"depth":5,"partition":16,"round":5,"budget":1,"problem":"is_prime","belief":[0.0351282,0.964872],"action":"Audit","observation":"revealed_attack"},{"depth":6,"partition":18,"round":6,"budget":0,"problem":"sum_of_digits","belief":[1,0],"action":null,"observation":null}]},{"iter":28,"steps":[]}]};
+const N_ITERS = DATA.iterations.length;
+const MAX_ITER = N_ITERS - 1;
+// The slider's max in the static HTML is just a sane default -- always
+// override it from the actual trace length here, or a stale hardcoded
+// value (e.g. left over from a shorter, un-tightened solve) silently
+// clamps slider.value on every assignment and the Play loop gets stuck
+// oscillating at whatever the old max was.
+document.getElementById("iter-slider").max = MAX_ITER;
+
+// ---------------------------------------------------------------
+// Build a nested hierarchy (for d3.hierarchy) from the flat node map
+// ---------------------------------------------------------------
+function buildTree(key) {
+  const n = DATA.nodes[key];
+  return {
+    key: n.key, depth: n.depth, round: n.round, budget: n.budget,
+    problem: n.problem, domain: n.domain, belief: n.belief, history: n.history,
+    edgeFromParent: null,
+    children: n.children.map(c => {
+      const child = buildTree(c.childKey);
+      child.edgeFromParent = { action: c.action, observation: c.observation };
+      return child;
+    }),
+  };
+}
+const rootData = buildTree(DATA.rootKey);
+const root = d3.hierarchy(rootData, d => d.children);
+
+const nodeW = 132, nodeH = 48;
+// Vertical (top-down) layout: depth increases downward, siblings spread
+// sideways -- makes better use of a tall, half-width pane than the earlier
+// left-to-right layout did. Nodes are deliberately small (with abbreviated
+// labels) because the tightened solve produces 85 nodes -- a tree this wide
+// needs every node to be compact, plus a horizontal pan slider (below).
+const treeLayout = d3.tree().nodeSize([nodeW + 18, nodeH + 34]);
+treeLayout(root);
+
+let minX = Infinity, maxX = -Infinity, maxY = 0;
+root.each(d => { minX = Math.min(minX, d.x); maxX = Math.max(maxX, d.x); maxY = Math.max(maxY, d.y); });
+const margin = { top: 30, left: 30, right: 30, bottom: 30 };
+const svgW = (maxX - minX) + nodeW + margin.left + margin.right;
+const svgH = maxY + nodeH + margin.top + margin.bottom;
+
+const treeSvg = d3.select("#tree-svg").attr("width", svgW).attr("height", svgH);
+const g = treeSvg.append("g")
+  .attr("transform", `translate(${margin.left - minX + nodeW / 2},${margin.top})`);
+
+// links
+const linkGen = d3.linkVertical().x(d => d.x).y(d => d.y);
+const linkSel = g.selectAll(".link")
+  .data(root.links())
+  .join("path")
+  .attr("class", "link")
+  .attr("d", d => linkGen({ source: { x: d.source.x, y: d.source.y + nodeH / 2 },
+                            target: { x: d.target.x, y: d.target.y - nodeH / 2 } }));
+
+// edge labels
+g.selectAll(".edge-label")
+  .data(root.links())
+  .join("text")
+  .attr("class", "edge-label")
+  .attr("x", d => (d.source.x + d.target.x) / 2 + 6)
+  .attr("y", d => (d.source.y + d.target.y) / 2 + 3)
+  .attr("text-anchor", "start")
+  .attr("font-size", 9)
+  .text(d => `${abbrevAction(d.target.data.edgeFromParent.action)}/${abbrevObs(d.target.data.edgeFromParent.observation)}`);
+
+function abbrevObs(o) {
+  return { none: "-", clear: "clr", flag: "FLAG", revealed_honest: "hon", revealed_attack: "ATK" }[o] || o;
+}
+function abbrevAction(a) {
+  return { Pass: "Ps", Cheap: "Ch", Audit: "Au", Defer: "Df" }[a] || a;
+}
+const PROBLEM_ABBR = {
+  find_maximum: "FMAX", is_palindrome: "PAL", fibonacci: "FIB", reverse_string: "REV",
+  count_vowels: "VOW", is_prime: "PRM", sum_of_digits: "SUM", remove_duplicates: "DUP",
+};
+
+const domainCol = { bounded: "#a6e3a1", unbounded: "#fab387" };
+
+const nodeSel = g.selectAll(".node")
+  .data(root.descendants())
+  .join("g")
+  .attr("class", "node")
+  .attr("transform", d => `translate(${d.x - nodeW / 2},${d.y - nodeH / 2})`);
+
+nodeSel.append("rect")
+  .attr("class", "node-rect")
+  .attr("width", nodeW).attr("height", nodeH).attr("rx", 6)
+  .attr("fill", "#2d2d41").attr("stroke", "#45475a").attr("stroke-width", 1.5);
+
+nodeSel.append("rect")
+  .attr("width", nodeW).attr("height", 4).attr("rx", 2)
+  .attr("fill", d => domainCol[d.data.domain] || "#585b70");
+
+nodeSel.append("text").attr("class", "node-label title")
+  .attr("x", 6).attr("y", 16).attr("font-size", 9.5).attr("fill", "#cdd6f4")
+  .text(d => `R${d.data.round + 1} ${PROBLEM_ABBR[d.data.problem] || d.data.problem}`);
+
+nodeSel.append("text").attr("class", "node-label belief")
+  .attr("x", 6).attr("y", 26).attr("font-size", 8.5).attr("fill", "#a6adc8")
+  .text(d => `b=${d.data.budget} P(S)=${d.data.belief[0].toFixed(3)}`);
+
+nodeSel.append("text").attr("class", "node-label bounds")
+  .attr("x", 6).attr("y", 36).attr("font-size", 8.5)
+  .text("");
+
+nodeSel.append("rect").attr("class", "gap-bar-bg")
+  .attr("x", 6).attr("y", 40).attr("width", nodeW - 12).attr("height", 3).attr("rx", 1.5)
+  .attr("fill", "#181825");
+nodeSel.append("rect").attr("class", "gap-bar")
+  .attr("x", 6).attr("y", 40).attr("height", 3).attr("rx", 1.5)
+  .attr("fill", "#f9e2af");
+
+// ---------------------------------------------------------------
+// Horizontal pan slider for the (now wide, 85-node) tree, plus a
+// safeguard so #tree-wrap's own scrollbar and this slider stay synced.
+// Declared here (rather than down by the other controls) because
+// update() below needs treeWrapEl/hscroll to auto-follow the active
+// trial as it plays -- otherwise, once the search moves to a branch
+// outside the current scroll position, the animation looks stuck even
+// though it's still running (bounds tightening off-screen).
+// ---------------------------------------------------------------
+const treeWrapEl = document.getElementById("tree-wrap");
+const hscroll = document.getElementById("tree-hscroll");
+function syncScrollRange() {
+  const maxScroll = Math.max(0, svgW - treeWrapEl.clientWidth);
+  hscroll.max = maxScroll;
+  if (+hscroll.value > maxScroll) hscroll.value = maxScroll;
+}
+syncScrollRange();
+treeWrapEl.scrollLeft = Math.max(0, (svgW - treeWrapEl.clientWidth) / 2);
+hscroll.value = treeWrapEl.scrollLeft;
+window.addEventListener("resize", syncScrollRange);
+hscroll.addEventListener("input", () => { treeWrapEl.scrollLeft = +hscroll.value; });
+treeWrapEl.addEventListener("scroll", () => { hscroll.value = treeWrapEl.scrollLeft; });
+
+// SVG-pixel x-coordinate of a node's center, matching g's own transform
+// (translate(margin.left - minX + nodeW/2, margin.top)).
+function nodeAbsX(dx) { return dx + (margin.left - minX + nodeW / 2); }
+
+// ---------------------------------------------------------------
+// Trial spotlight: for the currently selected iteration, show the
+// belief trajectory this one trial actually walked (root to frontier)
+// and what its backup did to the root's own LB/UB -- the rationale
+// illustration for why HSVI's trial-based backward induction works.
+// ---------------------------------------------------------------
+const trialPathEl = document.getElementById("trial-path");
+const trialBoundsSvg = d3.select("#trial-bounds-svg");
+
+function renderTrialPath(steps) {
+  const parts = [];
+  steps.forEach((s) => {
+    const prob = PROBLEM_ABBR[s.problem] || s.problem;
+    parts.push(
+      `<span class="trial-chip"><span class="t-title">R${s.round + 1} ${prob}</span><br>` +
+      `<span class="t-belief">b=${s.budget} P(S)=${s.belief[0].toFixed(3)}</span></span>`
+    );
+    if (s.action !== null) {
+      parts.push(`<span class="trial-arrow">${abbrevAction(s.action)}/${abbrevObs(s.observation)} &rarr;</span>`);
+    }
+  });
+  trialPathEl.innerHTML = parts.join("");
+}
+
+function renderTrialBounds(before, after) {
+  trialBoundsSvg.selectAll("*").remove();
+  // Extra top clearance (row 1 starts at y=18, not flush against the SVG's own
+  // edge) and a taller viewBox (88, up from 68) so the lb/ub number labels --
+  // which sit *above* each bar -- have room for their full height instead of
+  // being clipped by the top of the SVG or crowded against the chip row above.
+  const w = 620, barH = 16, padL = 138, padR = 26;
+  const lo = Math.min(before.lb, after.lb);
+  const hi = Math.max(before.ub, after.ub);
+  const span = Math.max(hi - lo, 1e-6) * 1.08;
+  const mid = (hi + lo) / 2;
+  const loPad = mid - span / 2, hiPad = mid + span / 2;
+  const scaleX = v => padL + ((v - loPad) / (hiPad - loPad)) * (w - padL - padR);
+
+  const rows = [
+    { label: "before this trial", lb: before.lb, ub: before.ub, y: 18, color: "#585b70" },
+    { label: "after this trial", lb: after.lb, ub: after.ub, y: 54, color: "#f9e2af" },
+  ];
+  rows.forEach(r => {
+    trialBoundsSvg.append("text").attr("x", 0).attr("y", r.y + barH / 2 + 4)
+      .attr("font-size", 10).attr("fill", "#a6adc8").text(r.label);
+    trialBoundsSvg.append("rect")
+      .attr("x", scaleX(r.lb)).attr("y", r.y).attr("width", Math.max(1, scaleX(r.ub) - scaleX(r.lb)))
+      .attr("height", barH).attr("rx", 3).attr("fill", r.color).attr("opacity", 0.85);
+    trialBoundsSvg.append("text").attr("x", scaleX(r.lb)).attr("y", r.y - 6)
+      .attr("font-size", 9).attr("fill", "#a6adc8").attr("text-anchor", "middle").text(r.lb.toFixed(3));
+    trialBoundsSvg.append("text").attr("x", scaleX(r.ub)).attr("y", r.y - 6)
+      .attr("font-size", 9).attr("fill", "#a6adc8").attr("text-anchor", "middle").text(r.ub.toFixed(3));
+  });
+  trialBoundsSvg.append("text").attr("x", padL).attr("y", 82).attr("font-size", 10).attr("fill", "#a6e3a1")
+    .text(`width: ${(before.ub - before.lb).toFixed(4)} → ${(after.ub - after.lb).toFixed(4)}  (Δ ${(before.ub - before.lb - (after.ub - after.lb)).toFixed(4)})`);
+}
+
+function updateTrialSpotlight(iter) {
+  const trial = DATA.trials[iter];
+  if (!trial || trial.steps.length === 0) {
+    // The very last logged "iter" record is a terminal snapshot (width < eps
+    // triggered a break before any trial ran for it), not an actual trial --
+    // there's nothing to spotlight.
+    trialPathEl.innerHTML = `<span class="trial-chip"><span class="t-title">solver converged</span><br>` +
+      `<span class="t-belief">width &lt; eps -- no further trial ran</span></span>`;
+    trialBoundsSvg.selectAll("*").remove();
+    return;
+  }
+  renderTrialPath(trial.steps);
+
+  const before = DATA.iterations[iter];
+  let after;
+  if (iter + 1 < DATA.iterations.length) {
+    after = DATA.iterations[iter + 1];
+  } else {
+    const rootHist = DATA.nodes[DATA.rootKey].history;
+    const finalBackup = [...rootHist].reverse().find(h => h.iter === iter && h.phase === "backup");
+    after = finalBackup || before;
+  }
+  renderTrialBounds(before, after);
+}
+
+// ---------------------------------------------------------------
+// Root convergence mini-chart
+// ---------------------------------------------------------------
+const chartSvg = d3.select("#chart-svg");
+const cw = 900, ch = 140, cm = { top: 10, right: 20, bottom: 24, left: 55 };
+const xScale = d3.scaleLinear().domain([0, MAX_ITER]).range([cm.left, cw - cm.right]);
+const allVals = DATA.iterations.flatMap(it => [it.lb, it.ub]);
+const yScale = d3.scaleLinear().domain([d3.min(allVals) - 3, d3.max(allVals) + 3]).range([ch - cm.bottom, cm.top]);
+
+chartSvg.append("g").attr("transform", `translate(0,${ch - cm.bottom})`)
+  .call(d3.axisBottom(xScale).ticks(N_ITERS).tickFormat(d3.format("d")))
+  .attr("color", "#585b70").selectAll("text").attr("fill", "#a6adc8").attr("font-size", 10);
+chartSvg.append("g").attr("transform", `translate(${cm.left},0)`)
+  .call(d3.axisLeft(yScale).ticks(4))
+  .attr("color", "#585b70").selectAll("text").attr("fill", "#a6adc8").attr("font-size", 10);
+
+const lineLb = d3.line().x(d => xScale(d.iter)).y(d => yScale(d.lb));
+const lineUb = d3.line().x(d => xScale(d.iter)).y(d => yScale(d.ub));
+chartSvg.append("path").datum(DATA.iterations).attr("d", lineLb).attr("fill", "none").attr("stroke", "#89b4fa").attr("stroke-width", 2);
+chartSvg.append("path").datum(DATA.iterations).attr("d", lineUb).attr("fill", "none").attr("stroke", "#f38ba8").attr("stroke-width", 2);
+chartSvg.append("text").attr("x", cw - 90).attr("y", 16).attr("fill", "#89b4fa").attr("font-size", 11).text("lower bound");
+chartSvg.append("text").attr("x", cw - 90).attr("y", 30).attr("fill", "#f38ba8").attr("font-size", 11).text("upper bound");
+
+const marker = chartSvg.append("line").attr("y1", cm.top).attr("y2", ch - cm.bottom)
+  .attr("stroke", "#f9e2af").attr("stroke-width", 2);
+
+// ---------------------------------------------------------------
+// Iteration playback / node & link state
+// ---------------------------------------------------------------
+function historyAsOf(hist, iter) {
+  let last = null;
+  for (const h of hist) if (h.iter <= iter) last = h; else break;
+  return last;
+}
+function firstIter(hist) { return hist.length ? hist[0].iter : Infinity; }
+function widthOfHist(h) { return h ? (h.ub - h.lb) : null; }
+// Was this node touched (peeked or backed up) by the trial running at `iter`?
+function isVisitedThisIter(nodeData, iter) {
+  const hist = nodeData.history;
+  return hist.length > 0 && firstIter(hist) <= iter && hist.some(e => e.iter === iter);
+}
+
+const maxWidthSeen = d3.max(Object.values(DATA.nodes), n => (n.history[0] ? n.history[0].ub - n.history[0].lb : 0)) || 1;
+const gapScale = d3.scaleLinear().domain([0, maxWidthSeen]).range([0, nodeW - 12]).clamp(true);
+
+function update(iter) {
+  d3.select("#iter-label").text(`iteration ${iter} / ${MAX_ITER}`);
+  marker.attr("x1", xScale(iter)).attr("x2", xScale(iter));
+  updateTrialSpotlight(iter);
+
+  let trialXSum = 0, trialXCount = 0;
+  nodeSel.each(function (d) {
+    const hist = d.data.history;
+    const visited = firstIter(hist) <= iter;
+    const h = visited ? historyAsOf(hist, iter) : null;
+    const isCurrentTrial = visited && hist.some(e => e.iter === iter);
+    const sel = d3.select(this);
+    sel.style("opacity", visited ? 1 : 0.15);
+    sel.select(".node-rect")
+      .attr("stroke", isCurrentTrial ? "#f9e2af" : "#45475a")
+      .attr("stroke-width", isCurrentTrial ? 3 : 1.5);
+    sel.select(".bounds")
+      .text(h ? `${h.lb.toFixed(2)} / ${h.ub.toFixed(2)}` : "not visited")
+      .attr("fill", h ? (h.phase === "backup" ? "#a6e3a1" : "#cdd6f4") : "#585b70");
+    sel.select(".gap-bar").attr("width", h ? gapScale(h.ub - h.lb) : 0);
+    if (isCurrentTrial) { trialXSum += d.x; trialXCount++; }
+  });
+
+  // Two distinct edge highlights, since HSVI's peek step commonly re-descends
+  // already-known ground before extending the frontier -- collapsing both
+  // into one "active" style left yellow-bordered nodes with no visible trail
+  // back to the root whenever a trial revisited an old path this iteration.
+  linkSel.classed("walked", d =>
+    isVisitedThisIter(d.source.data, iter) && isVisitedThisIter(d.target.data, iter));
+
+  linkSel.classed("active", d => {
+    const hist = d.target.data.history;
+    return hist.some(e => e.iter === iter) && firstIter(hist) <= iter && firstIter(d.source.data.history) <= iter
+           && firstIter(hist) === iter; // edge just taken this iteration (child first appears now)
+      ;
+  });
+
+  // Auto-follow: the trial at each iteration can jump to a completely
+  // different branch of this wide tree. Without this, the animation can
+  // look "stuck" once the active nodes move outside the visible scroll
+  // window, even though bounds are still tightening off-screen.
+  if (trialXCount > 0 && treeWrapEl.clientWidth > 0) {
+    const targetAbsX = nodeAbsX(trialXSum / trialXCount);
+    const maxScroll = Math.max(0, svgW - treeWrapEl.clientWidth);
+    const targetScroll = Math.max(0, Math.min(maxScroll, targetAbsX - treeWrapEl.clientWidth / 2));
+    treeWrapEl.scrollLeft = targetScroll;
+    hscroll.value = targetScroll;
+  }
+}
+
+update(0);
+
+// ---------------------------------------------------------------
+// Controls
+// ---------------------------------------------------------------
+const slider = document.getElementById("iter-slider");
+slider.addEventListener("input", () => update(+slider.value));
+
+let playing = false, playTimer = null;
+document.getElementById("play-btn").addEventListener("click", function () {
+  playing = !playing;
+  this.textContent = playing ? "Pause" : "Play";
+  if (playing) {
+    playTimer = setInterval(() => {
+      let v = +slider.value;
+      v = v >= MAX_ITER ? 0 : v + 1;
+      slider.value = v;
+      update(v);
+    }, 1200);
+  } else {
+    clearInterval(playTimer);
+  }
+});
+
+</script>
+</body>
+</html>

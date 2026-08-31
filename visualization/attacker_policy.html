@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Attacker's Worst-Case Strategy</title>
+<style>
+  body { margin: 0; padding: 20px; background: #1e1e2e; font-family: monospace; color: #cdd6f4; }
+  .wrap { max-width: 1150px; margin: 0 auto; }
+  h1 { font-size: 18px; margin: 0 0 6px; }
+  h2 { font-size: 14px; margin: 26px 0 8px; color: #cdd6f4; }
+  #instructions { font-size: 14px; color: #cdd6f4; margin-bottom: 16px; line-height: 1.5; }
+  #instructions code { color: #a6adc8; }
+  .legend { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; font-size: 12px; color: #a6adc8; margin-bottom: 20px; }
+  .legend span.sw { display: inline-block; width: 11px; height: 11px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
+  #nav { font-size: 13px; margin-bottom: 14px; }
+  #nav a { color: #89b4fa; text-decoration: none; }
+  #nav a:hover { text-decoration: underline; }
+  #nav .sep { color: #585b70; margin: 0 8px; }
+
+  .grid { display: grid; grid-template-columns: 150px repeat(3, 1fr); gap: 8px 10px; margin-bottom: 22px; }
+  .rowlabel { display: flex; flex-direction: column; justify-content: center; font-size: 12px; padding: 4px 6px; }
+  .rowlabel b { font-size: 13px; }
+  .rowlabel span { color: #a6adc8; font-size: 10.5px; }
+  .colhead { font-size: 11px; color: #a6adc8; text-align: center; padding-bottom: 2px; }
+
+  .cell { background: #2d2d41; border-radius: 8px; padding: 9px 9px 6px; position: relative; }
+  .cell.sparse { border: 1px dashed #45475a; }
+  .cell .pid { font-size: 9.5px; color: #6c7086; position: absolute; top: 4px; right: 7px; }
+  .cell .nvec { font-size: 9px; color: #6c7086; position: absolute; top: 4px; left: 9px; }
+  .chartSvg { display: block; margin-top: 10px; width: 100%; height: auto; }
+  .axislabel { font-size: 7.5px; fill: #6c7086; }
+
+  .caption { max-width: 1150px; font-size: 13px; color: #a6adc8; margin: 4px 0 20px; line-height: 1.55; }
+  .caption b { color: #cdd6f4; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div id="nav">
+    <b>Toy AI-control demo</b> -- <a href="monitors_dilemma.html">Play the game</a>
+    <span class="sep">|</span><a href="convergence_tree.html">See the solver converge</a>
+    <span class="sep">|</span><a href="strategy_comparison.html">Fixed vs. adaptive strategy</a>
+    <span class="sep">|</span><a href="policy_reconstruction.html">Reconstructed policy</a>
+    <span class="sep">|</span><a href="policy_reconstruction_defer.html">With Defer</a>
+    <span class="sep">|</span><a href="trial_walkthrough.html">One trial, worked example</a>
+    <span class="sep">|</span><a href="attacker_policy.html">Attacker's worst-case strategy</a>
+    <span class="sep">|</span><a href="safety_usefulness.html">Safety vs. usefulness</a>
+    <span class="sep">|</span><a href="two_sided_concealment.html">Two-sided: value of concealment</a>
+  </div>
+  <h1>The attacker's worst-case strategy</h1>
+  <div id="instructions">
+    Every other page here reconstructs the <i>Monitor's</i> policy. This one reconstructs the other
+    side: at each belief P(Schemer), what does the solver's own worst-case adversary actually do,
+    given that it secretly <i>is</i> the Schemer? This isn't free arithmetic the way the Monitor's
+    policy was -- the follower's mixed strategy is a genuine LP artifact (a dual/primal solution),
+    computed transiently inside <code>selectAO()</code> during exploration and never persisted the
+    way a <code>StrategyNode</code>'s <code>.strategy</code> is. Reconstructing it means re-solving a
+    small LP at each swept belief point (<code>Partition::getLowerboundLP</code> +
+    <code>LPHandle::getPlayer2Strategy()</code>), against the value function's already-fixed vector
+    set -- read-only relative to the solved game, just not free the way the Monitor's sweep was.
+    Only the Schemer row of the result means anything: the Benign state's nominal "Attack" action is
+    a no-op indistinguishable from Honest, so its slice of the strategy carries no information and is
+    omitted here.
+  </div>
+  <div class="legend">
+    <span><span class="sw" style="background:#f38ba8"></span>P(Attack) -- worst-case Schemer's probability of attacking, at this belief</span>
+    <span><span class="sw" style="background:#2d2d41;border:1px dashed #45475a"></span>nVectors &le; 1: partition rarely/never actually backed up -- treat the curve as noise, same caveat as the Monitor pages</span>
+  </div>
+
+  <div class="caption">
+    <b>The headline finding: the worst-case Schemer attacks almost everywhere, almost always.</b>
+    Across every partition that's actually been trained (nVectors &ge; 2), P(Attack) sits mostly in
+    the 0.8-1.0 range for any belief above 0 -- not the cagey, occasionally-honest adversary you might
+    expect given the earlier finding that an Audit's "honest" result doesn't always collapse belief to
+    exactly 0. Those two findings aren't in tension: even a small P(Honest) is enough to keep a
+    posterior belief nonzero after a clean Audit (Bayes' rule doesn't need much), and the softening
+    that does show up here is concentrated in a handful of partitions (2, 4, 5, 10, 11, 13, 14, 16,
+    17 -- mostly budget-1/2, mid-game rounds) rather than spread evenly. The guarantee the Monitor's
+    policy achieves isn't built around facing a rarely-attacking adversary -- it's built to hold up
+    against one that takes almost every opening it gets.
+  </div>
+
+  <h2>Round x audit-budget grid -- P(Attack) vs. belief P(Schemer)</h2>
+  <div class="caption" style="margin-top:0;">
+    Each cell: <b>x-axis</b> is belief P(Schemer), swept 0 to 1 -- not an iteration count, there's no
+    solver progress on this page at all, every point is read off the same already-solved value
+    function. <b>y-axis</b> is the worst-case Schemer's P(Attack) at that belief, 0 (always stays
+    Honest) to 1 (always Attacks) -- the shaded/filled area is exactly that probability.
+  </div>
+  <div class="grid" id="grid"></div>
+
+  <div class="caption">
+    <b>One outlier worth flagging, not over-reading:</b> partition 20 (round 7, sum_of_digits, budget
+    2) is the only trained partition where P(Attack) touches exactly <b>0</b> -- at belief 0.25
+    specifically, the worst-case Schemer stays perfectly honest. It's a real LP solution, not a
+    plotting artifact, but nVectors there is only 2, in the same lightly-trained territory as most of
+    this page, so it's a repeatable finding rather than a settled one -- the kind of thing worth
+    re-checking once/if this partition gets visited by more trials.
+  </div>
+  <div class="caption">
+    <b>A mechanical edge case, not a finding:</b> every partition shows a discontinuity right at
+    belief=0 (P(Attack) drops to exactly 0, then jumps as soon as belief ticks up to 0.01). That's a
+    boundary artifact of sweeping down to a belief where P(Schemer)=0 exactly -- the LP still returns
+    <i>some</i> strategy for the hypothetical "you secretly are the Schemer" row even when the belief
+    weighting on that row is zero, and there's nothing pinning that degenerate case to match the
+    limit as belief&rarr;0. It's the same category of edge case as the untrained partitions -- worth
+    excluding from the read, not a qualitative result.
+  </div>
+</div>
+
+<script>
+const PROBLEMS = ["find_maximum", "is_palindrome", "fibonacci", "reverse_string",
+                  "count_vowels", "is_prime", "sum_of_digits", "remove_duplicates"];
+const BUDGETS = [2, 1, 0]; // full -> spent, left to right
+
+// Per partition: nVectors, and P(Attack) at belief = 0, 0.01, 0.02, ..., 1.00
+// (101 points), from games/attacker_sweep_fixed.json (exportAttackerPolicySweep
+// in main.cpp). Honest probability is just 1 - P(Attack) at each point.
+const DATA = {"0":{"nVectors":1,"pts":[0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]},"1":{"nVectors":1,"pts":[0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]},"2":{"nVectors":2,"pts":[0,0.8998,0.881,0.8747,0.8715,0.8696,0.8684,0.8675,0.8668,0.8663,0.8659,0.8655,0.8652,0.865,0.8648,0.8646,0.8644,0.8643,0.8642,0.8641,0.864,0.8639,0.8638,0.8637,0.8637,0.8636,0.8635,0.8635,0.8634,0.8634,0.8633,0.8633,0.8633,0.8632,0.8632,0.8632,0.8631,0.8631,0.8631,0.8631,0.863,0.863,0.863,0.863,0.8629,0.8629,0.8629,0.8629,0.8629,0.8629,0.8628,0.8628,0.8628,0.8628,0.8628,0.8628,0.8628,0.8628,0.8627,0.8627,0.8627,0.8627,0.8627,0.8627,0.8627,0.8627,0.8627,0.8627,0.8626,0.8626,0.8625,0.8622,0.862,0.8618,0.8616,0.8615,0.8613,0.8611,0.861,0.861,0.8609,0.8609,0.8609,0.8608,0.8608,0.8607,0.8607,0.8607,0.8606,0.8606,0.8605,0.8605,0.8605,0.8604,0.8604,0.8604,0.8603,0.8603,0.8603,0.8603,0.8602]},"3":{"nVectors":1,"pts":[0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]},"4":{"nVectors":2,"pts":[0,0.8104,0.8669,0.8858,0.8952,0.9008,0.9046,0.9073,0.9093,0.9109,0.9121,0.9132,0.914,0.9148,0.9154,0.9159,0.9164,0.9168,0.9172,0.9175,0.9178,0.9181,0.9183,0.9185,0.9187,0.9177,0.9162,0.9148,0.9135,0.9122,0.9111,0.91,0.909,0.9084,0.9082,0.9081,0.9079,0.9078,0.9076,0.9075,0.9074,0.9073,0.9071,0.907,0.9069,0.9068,0.9067,0.9066,0.9066,0.9065,0.9064,0.9063,0.9062,0.9062,0.9061,0.906,0.906,0.9059,0.9059,0.9058,0.9058,0.9057,0.9056,0.9056,0.9055,0.9055,0.9055,0.9054,0.9054,0.9053,0.9053,0.9052,0.9052,0.9052,0.9051,0.9051,0.9051,0.905,0.905,0.905,0.9049,0.9049,0.9049,0.9048,0.9048,0.9048,0.9048,0.9047,0.9047,0.9047,0.9047,0.9046,0.9046,0.9046,0.9046,0.9046,0.9045,0.9045,0.9045,0.9045,0.9044]},"5":{"nVectors":3,"pts":[0,1,0.9631,0.9266,0.9084,0.8975,0.8902,0.885,0.8811,0.878,0.8756,0.8736,0.8719,0.8705,0.8693,0.8683,0.8674,0.8666,0.8659,0.8652,0.8646,0.8641,0.8636,0.8632,0.8628,0.8625,0.8621,0.8618,0.8615,0.8612,0.861,0.8608,0.8605,0.8603,0.8601,0.8599,0.8598,0.8596,0.8595,0.8593,0.8592,0.859,0.8589,0.8588,0.8587,0.8586,0.8585,0.8584,0.8583,0.8582,0.8581,0.858,0.858,0.858,0.858,0.858,0.858,0.8581,0.8581,0.8581,0.8581,0.8581,0.8581,0.8581,0.8582,0.8582,0.8582,0.8582,0.8582,0.8582,0.8582,0.8583,0.8583,0.8583,0.8583,0.8583,0.8583,0.8583,0.8582,0.8581,0.858,0.8579,0.8578,0.8576,0.8575,0.8574,0.8573,0.8572,0.8571,0.857,0.8569,0.8569,0.8568,0.8567,0.8566,0.8565,0.8564,0.8563,0.8563,0.8562,0.8561]},"6":{"nVectors":2,"pts":[0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]},"7":{"nVectors":3,"pts":[0,1,0.992,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]},"8":{"nVectors":3,"pts":[0,1,0.9608,0.983,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]},"9":{"nVectors":2,"pts":[0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]},"10":{"nVectors":3,"pts":[0,1,0.9647,0.9518,0.9453,0.9414,0.9388,0.937,0.9356,0.9345,0.9337,0.933,0.9324,0.9319,0.9318,0.9322,0.9327,0.9339,0.9358,0.9375,0.939,0.9404,0.9417,0.9429,0.9439,0.9449,0.9458,0.9467,0.9474,0.9482,0.9488,0.9495,0.9501,0.9506,0.9511,0.9516,0.9521,0.9525,0.9526,0.9526,0.9525,0.9524,0.9524,0.9523,0.9523,0.9522,0.9522,0.9521,0.9521,0.952,0.952,0.952,0.9519,0.9519,0.9519,0.9518,0.9518,0.9518,0.9517,0.9517,0.9517,0.9516,0.9516,0.9516,0.9516,0.9515,0.9515,0.9515,0.9515,0.9514,0.9514,0.9514,0.9514,0.9514,0.9514,0.9513,0.9513,0.9513,0.9513,0.9513,0.9513,0.9512,0.9512,0.9512,0.9512,0.9512,0.9512,0.9511,0.9511,0.9511,0.9511,0.9511,0.9511,0.9511,0.9511,0.9511,0.951,0.951,0.951,0.951,0.951]},"11":{"nVectors":3,"pts":[0,1,0.6714,0.7247,0.7513,0.7672,0.7779,0.7855,0.7912,0.7956,0.7992,0.8021,0.8045,0.8066,0.8083,0.8098,0.8112,0.8123,0.8134,0.8143,0.8152,0.8159,0.8166,0.8172,0.8178,0.8183,0.8188,0.8193,0.8197,0.8201,0.8205,0.8208,0.8211,0.8214,0.8217,0.822,0.8223,0.8225,0.8227,0.8229,0.8231,0.8233,0.8235,0.8237,0.8239,0.824,0.8242,0.8243,0.8244,0.8245,0.8245,0.8245,0.8246,0.8246,0.8244,0.8242,0.8241,0.8239,0.8237,0.8236,0.8234,0.8233,0.8231,0.823,0.8229,0.8227,0.8226,0.8225,0.8224,0.8223,0.8222,0.822,0.8219,0.8218,0.8217,0.8216,0.8216,0.8215,0.8214,0.8213,0.8212,0.8211,0.821,0.821,0.8209,0.8208,0.8207,0.8207,0.8206,0.8205,0.8205,0.8204,0.8203,0.8203,0.8202,0.8201,0.8201,0.82,0.82,0.8199,0.8199]},"12":{"nVectors":2,"pts":[0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]},"13":{"nVectors":3,"pts":[0,0.8522,0.85,0.8493,0.8489,0.8487,0.8485,0.85,0.8562,0.861,0.8648,0.8679,0.8705,0.8727,0.8746,0.8763,0.8777,0.879,0.8801,0.8811,0.8803,0.8792,0.8782,0.8773,0.8765,0.8757,0.875,0.8743,0.8737,0.8732,0.8727,0.8722,0.8717,0.8713,0.8709,0.8705,0.8701,0.8698,0.8694,0.8691,0.8688,0.8686,0.8683,0.868,0.8678,0.8676,0.8673,0.8671,0.8669,0.8667,0.8665,0.8664,0.8662,0.866,0.8659,0.8657,0.8656,0.8654,0.8653,0.8651,0.865,0.8649,0.8648,0.8646,0.8645,0.8644,0.8643,0.8642,0.8641,0.864,0.8639,0.8638,0.8637,0.8637,0.8636,0.8635,0.8634,0.8633,0.8632,0.8632,0.8631,0.863,0.863,0.8629,0.8628,0.8628,0.8627,0.8626,0.8626,0.8625,0.8625,0.8624,0.8624,0.8623,0.8622,0.8622,0.8621,0.8621,0.8621,0.862,0.862]},"14":{"nVectors":2,"pts":[0,1,0.9351,0.9019,0.8853,0.8754,0.8672,0.8545,0.8449,0.8375,0.8315,0.8266,0.8226,0.8191,0.8162,0.8136,0.8114,0.8094,0.8077,0.8061,0.8047,0.8034,0.8023,0.8012,0.8002,0.7993,0.7985,0.7974,0.7961,0.7956,0.795,0.7945,0.794,0.7935,0.7931,0.7927,0.7923,0.792,0.7916,0.7913,0.791,0.7907,0.7904,0.7902,0.7899,0.7897,0.7894,0.7892,0.789,0.7888,0.7886,0.7884,0.7882,0.7881,0.7879,0.7877,0.7876,0.7874,0.7873,0.7871,0.787,0.7869,0.7867,0.7866,0.7865,0.7864,0.7863,0.7862,0.7861,0.786,0.7859,0.7858,0.7857,0.7856,0.7855,0.7854,0.7853,0.7852,0.7852,0.7851,0.785,0.7849,0.7849,0.7848,0.7847,0.7846,0.7846,0.7845,0.7845,0.7844,0.7843,0.7843,0.7842,0.7842,0.7841,0.7841,0.784,0.7839,0.7839,0.7838,0.7838]},"15":{"nVectors":2,"pts":[0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]},"16":{"nVectors":3,"pts":[0,1,0.8405,0.8899,0.9393,0.9689,0.9887,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]},"17":{"nVectors":3,"pts":[0,1,0.7348,0.7719,0.8228,0.8533,0.8737,0.8882,0.8991,0.9076,0.9144,0.9199,0.9245,0.9285,0.9318,0.9347,0.9373,0.9395,0.9415,0.9433,0.9449,0.9464,0.9477,0.9489,0.95,0.951,0.9519,0.9528,0.9535,0.9534,0.9533,0.9531,0.953,0.953,0.9529,0.9528,0.9527,0.9526,0.9526,0.9525,0.9524,0.9524,0.9523,0.9523,0.9522,0.9522,0.9521,0.9521,0.952,0.952,0.952,0.9519,0.9519,0.9518,0.9518,0.9518,0.9517,0.9517,0.9517,0.9517,0.9516,0.9516,0.9516,0.9515,0.9515,0.9515,0.9515,0.9515,0.9514,0.9514,0.9514,0.9514,0.9514,0.9513,0.9513,0.9513,0.9513,0.9513,0.9513,0.9512,0.9512,0.9512,0.9512,0.9512,0.9512,0.9511,0.9511,0.9511,0.9511,0.9511,0.9511,0.9511,0.9511,0.951,0.951,0.951,0.951,0.951,0.951,0.951,0.951]},"18":{"nVectors":2,"pts":[0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]},"19":{"nVectors":2,"pts":[0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]},"20":{"nVectors":2,"pts":[0,1,0.6165,0.411,0.1512,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]},"21":{"nVectors":1,"pts":[0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]},"22":{"nVectors":2,"pts":[0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]},"23":{"nVectors":1,"pts":[0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]}};
+
+const SVG_W = 130, SVG_H = 58, PAD_L = 4, PAD_R = 4, PAD_T = 4, PAD_B = 4;
+const chartW = SVG_W - PAD_L - PAD_R, chartH = SVG_H - PAD_T - PAD_B;
+const beliefs = Array.from({length: 101}, (_, i) => i / 100);
+
+function xScale(b) { return PAD_L + b * chartW; }
+function yScale(p) { return PAD_T + (1 - p) * chartH; } // 1=top (all-attack), 0=bottom (all-honest)
+
+function buildCell(pid) {
+  const part = DATA[pid];
+  const cell = document.createElement("div");
+  cell.className = "cell" + (part.nVectors <= 1 ? " sparse" : "");
+
+  const tag = document.createElement("div");
+  tag.className = "pid";
+  tag.textContent = `P${pid}`;
+  cell.appendChild(tag);
+
+  const nv = document.createElement("div");
+  nv.className = "nvec";
+  nv.textContent = `n=${part.nVectors}`;
+  cell.appendChild(nv);
+
+  const svgNS = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(svgNS, "svg");
+  svg.setAttribute("viewBox", `0 0 ${SVG_W} ${SVG_H}`);
+  svg.setAttribute("class", "chartSvg");
+  cell.appendChild(svg);
+
+  // baseline / gridlines at P(Attack)=0, 0.5, 1
+  [0, 0.5, 1].forEach(v => {
+    const line = document.createElementNS(svgNS, "line");
+    line.setAttribute("x1", PAD_L); line.setAttribute("x2", SVG_W - PAD_R);
+    line.setAttribute("y1", yScale(v)); line.setAttribute("y2", yScale(v));
+    line.setAttribute("stroke", "#1e1e2e"); line.setAttribute("stroke-width", 1);
+    svg.appendChild(line);
+  });
+
+  // area fill under the curve
+  let areaPts = beliefs.map((b, i) => `${xScale(b)},${yScale(part.pts[i])}`).join(" ");
+  const area = document.createElementNS(svgNS, "polygon");
+  area.setAttribute("points", `${xScale(0)},${yScale(0)} ${areaPts} ${xScale(1)},${yScale(0)}`);
+  area.setAttribute("fill", "#f38ba8");
+  area.setAttribute("opacity", part.nVectors <= 1 ? "0.18" : "0.35");
+  svg.appendChild(area);
+
+  // line on top
+  const line = document.createElementNS(svgNS, "polyline");
+  line.setAttribute("points", areaPts);
+  line.setAttribute("fill", "none");
+  line.setAttribute("stroke", "#f38ba8");
+  line.setAttribute("stroke-width", part.nVectors <= 1 ? 1 : 1.5);
+  line.setAttribute("opacity", part.nVectors <= 1 ? "0.4" : "1");
+  svg.appendChild(line);
+
+  // Axis labels. Deliberately NOT numeric-only "0"/"1" in corners -- that's what
+  // made this ambiguous originally (a bare "0"/"1" pair reads just as easily as
+  // an iteration axis as a belief one). Every label here is prefixed so the two
+  // axes can't be confused with each other or misread as iteration count.
+  const yAxisCaption = document.createElementNS(svgNS, "text");
+  yAxisCaption.setAttribute("x", PAD_L + 1); yAxisCaption.setAttribute("y", PAD_T + 6);
+  yAxisCaption.setAttribute("class", "axislabel"); yAxisCaption.textContent = "Atk=1";
+  svg.appendChild(yAxisCaption);
+  const xStart = document.createElementNS(svgNS, "text");
+  xStart.setAttribute("x", PAD_L); xStart.setAttribute("y", SVG_H - 1);
+  xStart.setAttribute("class", "axislabel"); xStart.textContent = "P(S)=0";
+  svg.appendChild(xStart);
+  const xEnd = document.createElementNS(svgNS, "text");
+  xEnd.setAttribute("x", SVG_W - PAD_R); xEnd.setAttribute("y", SVG_H - 1);
+  xEnd.setAttribute("class", "axislabel"); xEnd.setAttribute("text-anchor", "end");
+  xEnd.textContent = "P(S)=1";
+  svg.appendChild(xEnd);
+
+  return cell;
+}
+
+const grid = document.getElementById("grid");
+const corner = document.createElement("div");
+grid.appendChild(corner);
+BUDGETS.forEach(b => {
+  const h = document.createElement("div");
+  h.className = "colhead";
+  h.textContent = b === 0 ? "Budget 0 (spent)" : `Budget ${b}`;
+  grid.appendChild(h);
+});
+
+for (let i = 0; i < 8; i++) {
+  const label = document.createElement("div");
+  label.className = "rowlabel";
+  label.innerHTML = `<b>R${i + 1}</b><span>${PROBLEMS[i]}</span>`;
+  grid.appendChild(label);
+
+  BUDGETS.forEach(b => {
+    const pid = i * 3 + b;
+    grid.appendChild(buildCell(String(pid)));
+  });
+}
+</script>
+</body>
+</html>

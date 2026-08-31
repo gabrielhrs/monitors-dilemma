@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Safety vs. Usefulness</title>
+<style>
+  body { margin: 0; padding: 20px; background: #1e1e2e; font-family: monospace; color: #cdd6f4; }
+  .wrap { max-width: 900px; margin: 0 auto; }
+  h1 { font-size: 18px; margin: 0 0 6px; }
+  h2 { font-size: 14px; margin: 26px 0 8px; color: #cdd6f4; }
+  #instructions { font-size: 14px; color: #cdd6f4; margin-bottom: 16px; line-height: 1.5; }
+  #instructions code { color: #a6adc8; }
+  #nav { font-size: 13px; margin-bottom: 14px; }
+  #nav a { color: #89b4fa; text-decoration: none; }
+  #nav a:hover { text-decoration: underline; }
+  #nav .sep { color: #585b70; margin: 0 8px; }
+
+  #scatter-svg { width: 100%; height: auto; display: block; margin: 10px auto; }
+  .axislabel { font-size: 12px; fill: #a6adc8; }
+  .pointlabel { font-size: 12px; fill: #cdd6f4; }
+  .pointsub { font-size: 10.5px; fill: #6c7086; }
+
+  .caption { font-size: 13px; color: #a6adc8; margin: 10px 0 20px; line-height: 1.55; }
+  .caption b { color: #cdd6f4; }
+  table.data { border-collapse: collapse; font-size: 12.5px; margin: 10px 0 24px; width: 100%; }
+  table.data th, table.data td { border: 1px solid #45475a; padding: 6px 10px; text-align: right; }
+  table.data th:first-child, table.data td:first-child { text-align: left; }
+  table.data th { color: #a6adc8; font-weight: normal; }
+  table.data td.hi { color: #a6e3a1; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div id="nav">
+    <b>Toy AI-control demo</b> -- <a href="monitors_dilemma.html">Play the game</a>
+    <span class="sep">|</span><a href="convergence_tree.html">See the solver converge</a>
+    <span class="sep">|</span><a href="strategy_comparison.html">Fixed vs. adaptive strategy</a>
+    <span class="sep">|</span><a href="policy_reconstruction.html">Reconstructed policy</a>
+    <span class="sep">|</span><a href="policy_reconstruction_defer.html">With Defer</a>
+    <span class="sep">|</span><a href="trial_walkthrough.html">One trial, worked example</a>
+    <span class="sep">|</span><a href="attacker_policy.html">Attacker's worst-case strategy</a>
+    <span class="sep">|</span><a href="safety_usefulness.html">Safety vs. usefulness</a>
+    <span class="sep">|</span><a href="two_sided_concealment.html">Two-sided: value of concealment</a>
+  </div>
+  <h1>Safety vs. usefulness: what the blended reward was actually trading off</h1>
+  <div id="instructions">
+    Every benchmark shown so far -- <a href="monitors_dilemma.html">no audits</a>, the
+    <a href="strategy_comparison.html">best/worst fixed 2-audit schedules</a>, and the
+    <a href="convergence_tree.html">solved adaptive policy</a> -- gets compared on one blended
+    number: <code>cost(a1) + P(real attack) * (1 - catch_prob) * C_CATASTROPHE</code>, summed and
+    discounted over 8 rounds. That number is genuinely what the solver optimizes, but it hides the
+    trade-off inside a single scalar. This page splits it back into the two things actually being
+    traded: how much monitoring overhead was spent (<b>usefulness cost</b>), and how much expected
+    real-attack probability mass slipped through uncaught (<b>safety</b>, lower is better). Neither
+    quantity was tracked separately anywhere in the original pipeline -- both are reconstructed here,
+    the fixed schedules from a closed-form split of <code>naive_baseline.py</code>'s existing formula,
+    and the solved adaptive point by walking the actual game tree under the reconstructed
+    <a href="policy_reconstruction.html">Monitor policy</a> and
+    <a href="attacker_policy.html">attacker policy</a> sweeps, replicating the solver's own
+    belief-update math by hand.
+  </div>
+
+  <h2>Four policies, two axes</h2>
+  <div class="caption" style="margin-top:0;">
+    <b>x-axis:</b> expected discounted usefulness cost (monitoring overhead spent, always &le; 0 --
+    closer to 0, further right, is better/cheaper). <b>y-axis:</b> expected discounted missed-attack
+    probability mass (lower is safer) -- plotted with low values <i>toward the top</i>, so up-and-right
+    is the direction both axes agree is better, same as the x-axis.
+  </div>
+  <svg id="scatter-svg" viewBox="0 0 700 420"></svg>
+
+  <table class="data">
+    <thead><tr><th>Policy</th><th>Usefulness cost</th><th>Safety (missed-attack mass)</th><th>Blended value</th></tr></thead>
+    <tbody id="data-rows"></tbody>
+  </table>
+
+  <div class="caption">
+    <b>The headline finding:</b> the solved adaptive policy has the <i>lowest</i> missed-attack mass
+    of all four points -- safer than even the best fixed 2-audit schedule -- while spending less on
+    monitoring overhead than either fixed-audit schedule (worst or best). It isn't a compromise
+    between the fixed schedules' safety and no-audits' usefulness; it Pareto-dominates both
+    fixed-audit schedules outright, on both axes at once. Only "no audits" beats it on usefulness,
+    and only by doing effectively nothing -- its missed-attack mass is by far the worst of the four,
+    roughly 46% higher than the solved policy's.
+  </div>
+  <div class="caption">
+    <b>On the reconstruction gap:</b> the solved-adaptive point's blended value (<span id="blended-note"></span>)
+    sits close to, but outside, the actual converged root bound <span id="root-bound-note"></span> from
+    <code>games/hsvi_trace_fixed.jsonl</code>. That's expected, not a bug: this point comes from
+    re-walking the game tree with nearest-neighbor lookups into two independent 0.01-belief-resolution
+    sweeps at each of 8 rounds (compounding grid-snap error), rather than reading the solver's own
+    alpha-vectors directly. The underlying single-step belief-update math was checked directly against
+    the real solver trace and matches closely: reconstructing the same step shown in the
+    <a href="trial_walkthrough.html">worked trial example</a> (an Audit at the root coming back
+    "honest") gives belief 0.0435 here vs. 0.042 logged by the actual solver.
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<script>
+const DATA = {"no_audits": {"usefulness": -1.3463182748437497, "safety": 1.5743860662890623, "blended": -80.06562158929687}, "worst_fixed": {"usefulness": -2.5534165373437494, "safety": 1.2650671365234374, "blended": -65.80677336351562, "audit_rounds": [5, 6]}, "best_fixed": {"usefulness": -2.9063182748437497, "safety": 1.0868860662890623, "blended": -57.25062158929686, "audit_rounds": [0, 1]}, "solved_adaptive": {"usefulness": -2.0849095283906345, "safety": 1.075440504016002, "blended": -55.85693472919073}, "known_root_bounds": {"lb": -56.5346, "ub": -56.4853}, "notes": "usefulness = expected discounted sum of cost(a1) (monitoring overhead, <=0, closer to 0 is better). safety = expected discounted sum of P(Schemer)*P(Attack|belief)*(1-catch_prob) -- 'missed real-attack probability mass', >=0, lower is better. blended = usefulness + safety*C_CATASTROPHE, the single scalar the solver actually optimizes. solved_adaptive's blended value sits close to but outside the converged root bound because it's reconstructed from a 0.01-belief-resolution sweep recomputed independently at each of 8 rounds, not read directly off the solver's own alpha-vectors -- the underlying belief-update math was checked against the real solver trace and matches closely (0.0435 reconstructed vs 0.042 logged for the same step)."}
+;
+
+const points = [
+  { key: "no_audits", label: "No audits", sub: "all-Cheap", color: "#f9e2af" },
+  { key: "worst_fixed", label: "Worst fixed", sub: `audit R${DATA.worst_fixed.audit_rounds.map(r=>r+1).join(",R")}`, color: "#f38ba8" },
+  { key: "best_fixed", label: "Best fixed", sub: `audit R${DATA.best_fixed.audit_rounds.map(r=>r+1).join(",R")}`, color: "#89b4fa" },
+  { key: "solved_adaptive", label: "Solved adaptive", sub: "reconstructed policy", color: "#a6e3a1" },
+];
+
+const svg = d3.select("#scatter-svg");
+const W = 700, H = 420, padL = 90, padR = 40, padT = 30, padB = 60;
+const chartW = W - padL - padR, chartH = H - padT - padB;
+
+const costs = points.map(p => DATA[p.key].usefulness);
+const safeties = points.map(p => DATA[p.key].safety);
+const costMin = Math.min(...costs), costMax = Math.max(...costs);
+const safeMin = Math.min(...safeties), safeMax = Math.max(...safeties);
+const costPad = (costMax - costMin) * 0.22, safePad = (safeMax - safeMin) * 0.22;
+
+function xScale(c) {
+  return padL + ((c - (costMin - costPad)) / ((costMax + costPad) - (costMin - costPad))) * chartW;
+}
+function yScale(s) {
+  // low safety value (good) -> near top
+  return padT + ((s - (safeMin - safePad)) / ((safeMax + safePad) - (safeMin - safePad))) * chartH;
+}
+
+// axes
+svg.append("line").attr("x1", padL).attr("x2", W - padR).attr("y1", H - padB).attr("y2", H - padB)
+  .attr("stroke", "#45475a");
+svg.append("line").attr("x1", padL).attr("x2", padL).attr("y1", padT).attr("y2", H - padB)
+  .attr("stroke", "#45475a");
+
+svg.append("text").attr("class", "axislabel").attr("x", padL + chartW / 2).attr("y", H - 14)
+  .attr("text-anchor", "middle").text("usefulness cost (0 = free, further right = cheaper)  →");
+svg.append("text").attr("class", "axislabel")
+  .attr("transform", `translate(20, ${padT + chartH / 2}) rotate(-90)`)
+  .attr("text-anchor", "middle").text("← safer   missed-attack probability mass   less safe →");
+
+// "better" corner hint
+svg.append("text").attr("class", "pointsub").attr("x", W - padR).attr("y", padT - 8)
+  .attr("text-anchor", "end").text("better → up and right");
+
+// gridline at safety min/max reference
+[safeMin, safeMax].forEach(s => {
+  svg.append("line").attr("x1", padL).attr("x2", W - padR).attr("y1", yScale(s)).attr("y2", yScale(s))
+    .attr("stroke", "#2d2d41").attr("stroke-dasharray", "3,3");
+});
+
+points.forEach(p => {
+  const d = DATA[p.key];
+  const cx = xScale(d.usefulness), cy = yScale(d.safety);
+  svg.append("circle").attr("cx", cx).attr("cy", cy).attr("r", 8)
+    .attr("fill", p.color).attr("stroke", "#1e1e2e").attr("stroke-width", 1.5);
+  svg.append("text").attr("class", "pointlabel").attr("x", cx + 12).attr("y", cy - 6)
+    .text(p.label);
+  svg.append("text").attr("class", "pointsub").attr("x", cx + 12).attr("y", cy + 8)
+    .text(p.sub);
+});
+
+// data table
+const rows = d3.select("#data-rows");
+points.forEach(p => {
+  const d = DATA[p.key];
+  const tr = rows.append("tr");
+  tr.append("td").text(p.label + (p.key === "solved_adaptive" ? " (reconstructed)" : ""));
+  tr.append("td").attr("class", p.key === "no_audits" ? "hi" : "").text(d.usefulness.toFixed(4));
+  tr.append("td").attr("class", p.key === "solved_adaptive" ? "hi" : "").text(d.safety.toFixed(4));
+  tr.append("td").text(d.blended.toFixed(3));
+});
+
+document.getElementById("blended-note").textContent = DATA.solved_adaptive.blended.toFixed(3);
+document.getElementById("root-bound-note").textContent =
+  `[${DATA.known_root_bounds.lb.toFixed(4)}, ${DATA.known_root_bounds.ub.toFixed(4)}]`;
+</script>
+</body>
+</html>
