@@ -16,8 +16,7 @@ safety/usefulness breakdown, and the two-sided concealment finding.
 ## What's in this repo, and what isn't
 
 This repo tracks the project's own scripts, the generated game files they produce, and the
-visualization pages built from the solved results -- **not** the two C++ solvers this
-project runs on top of. Both are academic code and aren't republished here.
+visualization pages built from the solved results.
 
 - `visualization/` -- static HTML+D3 pages, no backend, each self-contained with its own
   data and explanatory text.
