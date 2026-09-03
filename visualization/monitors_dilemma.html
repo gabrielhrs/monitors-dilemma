@@ -5,8 +5,8 @@
 <title>Monitor's Dilemma</title>
 <style>
   body { margin: 0; padding: 20px; background: #1e1e2e; font-family: monospace; }
-  #instructions { color: #cdd6f4; max-width: 700px; margin: 0 auto 10px; font-size: 14px; }
-  #nav { color: #cdd6f4; max-width: 700px; margin: 0 auto 14px; font-size: 13px; }
+  #instructions { color: #cdd6f4; max-width: 860px; margin: 0 auto 10px; font-size: 14px; }
+  #nav { color: #cdd6f4; max-width: 860px; margin: 0 auto 14px; font-size: 13px; }
   #nav a { color: #89b4fa; text-decoration: none; }
   #nav a:hover { text-decoration: underline; }
   #nav .sep { color: #585b70; margin: 0 8px; }
@@ -102,14 +102,14 @@ function resetGame() {
 }
 
 function setup() {
-  createCanvas(700, 620);
+  createCanvas(860, 620);
   textFont("monospace");
   resetGame();
 
   buttons = [
     { label: "Pass", x: 60, y: 250, w: 160, h: 50 },
-    { label: "Cheap (k=5)", x: 270, y: 250, w: 160, h: 50 },
-    { label: "Audit", x: 480, y: 250, w: 160, h: 50 }
+    { label: "Cheap (k=5)", x: 350, y: 250, w: 160, h: 50 },
+    { label: "Audit", x: 640, y: 250, w: 160, h: 50 }
   ];
 }
 
@@ -174,16 +174,25 @@ function drawCodeReveal() {
 
   fill(24, 24, 36);
   const codeH = height - codeTop - 40;
-  rect(30, codeTop, 640, codeH, 6);
+  const codeW = width - 60;
+  rect(30, codeTop, codeW, codeH, 6);
 
   textSize(11);
   fill(220, 220, 235);
   const lines = r.code.split("\n");
   const lineH = 15;
   const maxLines = Math.floor((codeH - 16) / lineH);
+  const maxTextW = codeW - 20;
   let y = codeTop + 12;
   for (let i = 0; i < Math.min(lines.length, maxLines); i++) {
-    text(lines[i], 40, y);
+    let line = lines[i];
+    if (textWidth(line) > maxTextW) {
+      while (line.length > 0 && textWidth(line + "…") > maxTextW) {
+        line = line.slice(0, -1);
+      }
+      line += "…";
+    }
+    text(line, 40, y);
     y += lineH;
   }
   if (lines.length > maxLines) {
@@ -213,7 +222,7 @@ function drawRoundInfo() {
 }
 
 function drawBeliefBar() {
-  const barX = 30, barY = 120, barW = 640, barH = 30;
+  const barX = 30, barY = 120, barW = width - 60, barH = 30;
   fill(69, 71, 90);
   rect(barX, barY, barW, barH, 6);
 
@@ -287,7 +296,7 @@ function drawTimeline(topY, revealTruth) {
   textSize(13);
   text("Round-by-round timeline:", 30, topY);
 
-  const colW = 76, gapW = 4, colH = 90, startY = topY + 15;
+  const colW = 96, gapW = 4, colH = 90, startY = topY + 15;
 
   for (let i = 0; i < N_ROUNDS; i++) {
     const x = 30 + i * (colW + gapW);
@@ -379,7 +388,7 @@ function drawEndScreen() {
   const allValues = BENCHMARKS.map(b => b.value).concat([cumulativeReward, runningAvg]);
   const minV = Math.min(...allValues) - 5;
   const maxV = Math.max(...allValues) + 5;
-  const chartX = 30, chartW = 640, chartTop = 155, barH = 28, gap = 14;
+  const chartX = 30, chartW = width - 60, chartTop = 155, barH = 28, gap = 14;
 
   const scale_ = v => map(v, minV, maxV, 0, chartW);
 
