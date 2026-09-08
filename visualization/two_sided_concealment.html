@@ -293,7 +293,9 @@ const RESULT = {
   const yMin = Math.min(...vals) - 0.1, yMax = 0;
   const yScale = v => padT + (1 - (v - yMin) / (yMax - yMin)) * chartH;
   const barW = 160, gap = 100;
-  const xCenters = [padL + gap + barW/2, padL + gap*2 + barW*1.5 + gap];
+  const contentW = barW * 2 + gap;
+  const startX = padL + (chartW - contentW) / 2;
+  const xCenters = [startX + barW/2, startX + barW + gap + barW/2];
 
   svg.append("line").attr("x1", padL).attr("x2", W - padR).attr("y1", yScale(0)).attr("y2", yScale(0)).attr("stroke", "#45475a");
   svg.append("line").attr("x1", padL).attr("x2", padL).attr("y1", padT).attr("y2", H - padB).attr("stroke", "#45475a");
