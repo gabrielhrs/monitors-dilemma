@@ -185,29 +185,30 @@
     check against. Tried it at full scale (the real 8-round, 8-problem game) anyway.
   </div>
 
-  <h2>Confirmed at full scale -- with a caveat</h2>
+  <h2>Confirmed at full scale</h2>
   <div class="caption" style="margin-top:0;">
-    First, under the full game's own original reward structure (no bonus): an exact repeat of
-    the toy's original null result. Full-info and noisy brackets, and even the best-response
-    sequences (flat at exactly -57.764 across 7 depths, in both games) matched precisely. A
+    First, under the full game's own original reward structure (no bonus): an exact repeat of the
+    toy's original null result. Full-info and noisy brackets, and the best-response sequences (flat
+    at exactly <b>-60.111</b> across all 7 depths, in both games, gap 0.987) matched precisely. The
     likely reason ties back to an already-documented finding elsewhere in this project: the
     worst-case Schemer's actual policy attacks almost everywhere, almost always, regardless of
-    belief -- if its behavior barely responds to information it already has, there's nothing
-    left for concealment to change.
+    belief -- if its behavior barely responds to information it already has, there's nothing left
+    for concealment to change.
   </div>
   <div class="caption">
-    Applying the same <code>C_CATCH_BONUS</code> fix (scaled to the same bonus/catastrophe
-    ratio the toy used) brought the effect back, same direction: best-response
-    <b>-52.279 (noisy) vs. -52.308 (full-info)</b>, a real gap of about 0.03 in the Monitor's
-    favor under concealment. But relative to the game's own scale, that's roughly <b>30x
-    smaller proportionally</b> than the toy's effect (0.06% of the full game's value vs. 1.7%
-    of the toy's) -- the mechanism's contribution appears to get diluted across 8 rounds'
-    worth of other reward-driving structure it doesn't touch. The finding generalizes
-    <i>qualitatively</i> (concealing a genuinely mixed strategy has real value, confirmed at
-    both scales) but not <i>proportionally</i> -- a genuine, honest result rather than either
-    a clean confirmation or a clean failure. Not chased further (tighter <code>eps</code>,
-    isolating which specific rounds carry the effect), consistent with treating this as a
-    proof of concept for the methodology.
+    Applying the same <code>C_CATCH_BONUS</code> fix (scaled to the same bonus/catastrophe ratio
+    the toy used) brought the effect back, same direction: best-response <b>-55.120 (noisy) vs.
+    -55.139 (full-info)</b> -- both read at their converged depth (noisy stabilizes by depth 3,
+    full-info by depth 4; earlier depths are still settling and shouldn't be read as the answer).
+    A real gap of <b>0.019</b> in the Monitor's favor under concealment. Relative to the game's own
+    scale, that's roughly <b>48x smaller proportionally</b> than the toy's effect (0.035% of the
+    full game's value vs. 1.67% of the toy's) -- the mechanism's contribution appears to get diluted
+    across 8 rounds' worth of other reward-driving structure it doesn't touch. The finding
+    generalizes <i>qualitatively</i> (concealing a genuinely mixed strategy has real value,
+    confirmed at both scales) but not <i>proportionally</i> -- a genuine, honest result rather than
+    either a clean confirmation or a clean failure. Not chased further (tighter <code>eps</code>,
+    isolating which specific rounds carry the effect), consistent with treating this as a proof of
+    concept for the methodology.
   </div>
 </div>
 

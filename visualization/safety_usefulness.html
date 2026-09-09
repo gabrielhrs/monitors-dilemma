@@ -53,11 +53,13 @@
     traded: how much monitoring overhead was spent (<b>usefulness cost</b>), and how much expected
     real-attack probability mass slipped through uncaught (<b>safety</b>, lower is better). Neither
     quantity was tracked separately anywhere in the original pipeline -- both are reconstructed here,
-    the fixed schedules from a closed-form split of <code>naive_baseline.py</code>'s existing formula,
+    the fixed schedules from a closed-form split of <code>scripts/naive_baseline_v2.py</code>'s existing formula,
     and the solved adaptive point by walking the actual game tree under the reconstructed
     <a href="policy_reconstruction.html">Monitor policy</a> and
     <a href="attacker_policy.html">attacker policy</a> sweeps, replicating the solver's own
-    belief-update math by hand.
+    belief-update math by hand. All four points use the same per-function Cheap-check catch
+    probabilities (k=5 probes divided by each problem's reachable domain size) used throughout this
+    project.
   </div>
 
   <h2>Four policies, two axes</h2>
@@ -81,24 +83,24 @@
     between the fixed schedules' safety and no-audits' usefulness; it Pareto-dominates both
     fixed-audit schedules outright, on both axes at once. Only "no audits" beats it on usefulness,
     and only by doing effectively nothing -- its missed-attack mass is by far the worst of the four,
-    roughly 46% higher than the solved policy's.
+    roughly 43% higher than the solved policy's.
   </div>
   <div class="caption">
     <b>On the reconstruction gap:</b> the solved-adaptive point's blended value (<span id="blended-note"></span>)
-    sits close to, but outside, the actual converged root bound <span id="root-bound-note"></span> from
-    <code>games/hsvi_trace_fixed.jsonl</code>. That's expected, not a bug: this point comes from
-    re-walking the game tree with nearest-neighbor lookups into two independent 0.01-belief-resolution
+    sits close to, but outside, the actual converged root bound <span id="root-bound-note"></span>.
+    That's expected, not a bug: this point comes
+    from re-walking the game tree with nearest-neighbor lookups into two independent 0.01-belief-resolution
     sweeps at each of 8 rounds (compounding grid-snap error), rather than reading the solver's own
     alpha-vectors directly. The underlying single-step belief-update math was checked directly against
-    the real solver trace and matches closely: reconstructing the same step shown in the
-    <a href="trial_walkthrough.html">worked trial example</a> (an Audit at the root coming back
-    "honest") gives belief 0.0435 here vs. 0.042 logged by the actual solver.
+    the real solver trace and matches closely: reconstructing the R2 (is_palindrome) step from the
+    <a href="strategy_comparison.html">"reassured early, confirmed late" trial</a> (an Audit coming
+    back "honest," prior belief 0.25) gives belief 0.0435 here vs. 0.0411 logged by the actual solver.
   </div>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
 <script>
-const DATA = {"no_audits": {"usefulness": -1.3463182748437497, "safety": 1.5743860662890623, "blended": -80.06562158929687}, "worst_fixed": {"usefulness": -2.5534165373437494, "safety": 1.2650671365234374, "blended": -65.80677336351562, "audit_rounds": [5, 6]}, "best_fixed": {"usefulness": -2.9063182748437497, "safety": 1.0868860662890623, "blended": -57.25062158929686, "audit_rounds": [0, 1]}, "solved_adaptive": {"usefulness": -2.0849095283906345, "safety": 1.075440504016002, "blended": -55.85693472919073}, "known_root_bounds": {"lb": -56.5346, "ub": -56.4853}, "notes": "usefulness = expected discounted sum of cost(a1) (monitoring overhead, <=0, closer to 0 is better). safety = expected discounted sum of P(Schemer)*P(Attack|belief)*(1-catch_prob) -- 'missed real-attack probability mass', >=0, lower is better. blended = usefulness + safety*C_CATASTROPHE, the single scalar the solver actually optimizes. solved_adaptive's blended value sits close to but outside the converged root bound because it's reconstructed from a 0.01-belief-resolution sweep recomputed independently at each of 8 rounds, not read directly off the solver's own alpha-vectors -- the underlying belief-update math was checked against the real solver trace and matches closely (0.0435 reconstructed vs 0.042 logged for the same step)."}
+const DATA = {"no_audits":{"usefulness":-1.3463182748437497,"safety":1.6242210777345305,"blended":-82.55737216157027},"worst_fixed":{"usefulness":-2.5240128617187496,"safety":1.2772181752464191,"blended":-66.3849216240397,"audit_rounds":[5,7]},"best_fixed":{"usefulness":-2.9063182748437497,"safety":1.1367210777345305,"blended":-59.74237216157027,"audit_rounds":[0,1]},"solved_adaptive":{"usefulness":-2.0434442864508005,"safety":1.1362698710657304,"blended":-58.85693783973732},"known_root_bounds":{"lb":-58.9566,"ub":-58.9157},"notes":"CORRECTED (Sept 2026): uses per-function Cheap-check catch probabilities (k=5 probes / reachable domain size), not the old flat bounded=0.18/unbounded=0.00 model. usefulness = expected discounted sum of cost(a1) (monitoring overhead, <=0, closer to 0 is better). safety = expected discounted sum of P(Schemer)*P(Attack|belief)*(1-catch_prob) -- 'missed real-attack probability mass', >=0, lower is better. blended = usefulness + safety*C_CATASTROPHE, the single scalar the solver actually optimizes. solved_adaptive's blended value sits close to but outside the converged root bound because it's reconstructed from a 0.01-belief-resolution sweep recomputed independently at each of 8 rounds, not read directly off the solver's own alpha-vectors -- see scripts/build_safety_usefulness_v2.py."}
 ;
 
 const points = [

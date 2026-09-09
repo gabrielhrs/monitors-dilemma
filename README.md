@@ -20,15 +20,24 @@ visualization pages built from the solved results.
 
 - `visualization/` -- static HTML+D3 pages, no backend, each self-contained with its own
   data and explanatory text.
-- `build_toy_control_game.py`, `build_toy_control_game_twosided*.py` -- generate the game
-  description files the solvers read.
-- `adaptive_rule_baseline.py`, `naive_baseline.py`, `build_safety_usefulness.py`,
-  `build_convergence_tree.py` -- the baseline comparisons and data-processing steps behind
-  several of the visualizations.
-- `toy_two_sided_brute_force.py`, `toy_two_sided_build_and_verify.py`,
-  `toy_control_twosided_verify.py` -- independent ground-truth and constraint-verification
-  scripts for the two-sided extension (an exact LP-duality solve, checked against the
-  solver's own result).
+- `scripts/` -- every generator, baseline, and verification script, revision-numbered
+  (`_v1`, `_v2`, ...) rather than kept as loose `_corrected`/`_old` copies: a script gets a
+  new suffixed file each time its logic changes, so the previous revision stays around
+  unmodified for diffing rather than only living in git history. **The highest-numbered
+  suffix for a given base name is always the current one** -- e.g.
+  `build_toy_control_game_v2.py` (not `_v1.py`) is what every current visualization and doc
+  is built from. Scripts are meant to be run from the repo root (`python3
+  scripts/<name>.py`) since they resolve `games/...` paths relative to the working
+  directory, not the script's own location. Current revisions as of this writing:
+  - `build_toy_control_game_v2.py`, `build_toy_control_game_twosided_v1.py` (+
+    `_fullinfo_v1`, `_retuned_v1`) -- generate the game description files the solvers read.
+  - `adaptive_rule_baseline_v2.py`, `naive_baseline_v2.py`, `build_safety_usefulness_v2.py`,
+    `build_convergence_tree_v1.py` -- the baseline comparisons and data-processing steps
+    behind several of the visualizations.
+  - `toy_two_sided_brute_force_v1.py`, `toy_two_sided_build_and_verify_v1.py`,
+    `toy_control_twosided_verify_v1.py` -- independent ground-truth and
+    constraint-verification scripts for the two-sided extension (an exact LP-duality solve,
+    checked against the solver's own result).
 - `games/` -- the one-sided game files (`.posg`) the generator scripts produce.
 - `twosided_games/` -- the two-sided game files (`.txt`), including the toy and full-scale
   versions used to test whether concealing a defender's mixed strategy from an attacker has

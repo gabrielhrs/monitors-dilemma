@@ -3,31 +3,43 @@ Ports the real 8-round toy AI-control game to the twosided-posgs format,
 using the same design validated by the 2-round toy: catching is fully
 reward-based (R(s1,s2,a1,a2) carries the exact catch_prob/cost formula from
 the one-sided game), the Monitor's belief about the Schemer's type updates
-via a passive, domain-dependent leak (O1, reusing the measured
-P_CHEAP_CATCH values as the ambient detectability of a real attack -- since
-O1 can't be gated by the Monitor's own action in this solver's format), and
-the Schemer's belief about the Monitor's remaining audit budget updates via
-a genuinely noisy signal gated by the Monitor's own (s1,a1) (O2) -- the
-actual new capability over the one-sided game.
+via a passive, per-problem leak (O1, reusing the corrected per-function
+Cheap-check catch probabilities -- k probes / reachable domain size -- as
+the ambient detectability of a real attack, since O1 can't be gated by the
+Monitor's own action in this solver's format), and the Schemer's belief
+about the Monitor's remaining audit budget updates via a genuinely noisy
+signal gated by the Monitor's own (s1,a1) (O2) -- the actual new capability
+over the one-sided game.
 
-Constants below are copied verbatim from build_toy_control_game.py to
-guarantee exact consistency with the one-sided game (no Defer action here --
-matching the primary 3-action game most of this project's pages describe).
+CORRECTED (Sept 2026): the flat P_CHEAP_CATCH={"bounded":0.18,"unbounded":0.00}
+model this file used to carry (copied verbatim from the pre-correction
+build_toy_control_game_v1.py) conflated eight problems with wildly different
+domain sizes into one number. Replaced with the same per-function
+k=5-probes/reachable-domain-size model used by
+build_toy_control_game_v2.py -- see that file and
+docs/toy_demo_findings.md for the derivation. Everything else here is
+unchanged (no Defer action -- matching the primary 3-action game most of
+this project's pages describe).
 
-Run: python3 build_twosided_full.py
-Writes: toy_control_twosided.txt
+Run (from repo root): python3 scripts/build_toy_control_game_twosided_v1.py
+Writes: games/toy_control_twosided.txt (in the twosided-posgs repo)
 """
 import itertools
 from collections import defaultdict
 
-# ---- exact constants from build_toy_control_game.py ----
+# ---- exact constants from build_toy_control_game_v2.py ----
 P_SCHEMER_PRIOR = 0.25
-P_CHEAP_CATCH = {"bounded": 0.18, "unbounded": 0.00}
+PROBLEM_NAMES = ["find_maximum", "is_palindrome", "fibonacci", "reverse_string",
+                  "count_vowels", "is_prime", "sum_of_digits", "remove_duplicates"]
+REACHABLE_DOMAIN_SIZE = {
+    "find_maximum": None, "is_palindrome": None, "fibonacci": 30,
+    "reverse_string": None, "count_vowels": None, "is_prime": 46,
+    "sum_of_digits": 20000, "remove_duplicates": None,
+}
+K_PROBES = 5
 P_AUDIT_CATCH = 1.0
 C_PASS, C_CHEAP, C_AUDIT, C_CATASTROPHE = 0.0, -0.2, -1.0, -50.0
-DOMAIN_TYPES = ["unbounded", "unbounded", "bounded", "unbounded",
-                "unbounded", "bounded", "bounded", "unbounded"]
-N_ROUNDS = len(DOMAIN_TYPES)
+N_ROUNDS = len(PROBLEM_NAMES)
 BUDGETS = [0, 1, 2]
 GAMMA = 0.95
 TYPE_IDX = {"Schemer": 0, "Benign": 1}   # matches TYPES=["Schemer","Benign"] order
@@ -35,8 +47,12 @@ TYPE_IDX = {"Schemer": 0, "Benign": 1}   # matches TYPES=["Schemer","Benign"] or
 # ---- new (illustrative, not measured) two-sided-specific parameters ----
 P_PARANOIA = {"Pass": 0.1, "Cheap": 0.3, "Audit": 0.8}  # Schemer's O2: P(felt watched)
 
-def catch_prob(a1, domain):
-    return {"Pass": 0.0, "Cheap": P_CHEAP_CATCH[domain], "Audit": P_AUDIT_CATCH}[a1]
+def cheap_catch_prob(round_i):
+    size = REACHABLE_DOMAIN_SIZE[PROBLEM_NAMES[round_i]]
+    return 0.0 if size is None else min(1.0, K_PROBES / size)
+
+def catch_prob(a1, round_i):
+    return {"Pass": 0.0, "Cheap": cheap_catch_prob(round_i), "Audit": P_AUDIT_CATCH}[a1]
 
 def cost(a1):
     return {"Pass": C_PASS, "Cheap": C_CHEAP, "Audit": C_AUDIT}[a1]
@@ -80,13 +96,13 @@ for s1 in range(NUM_S1):
 for s2 in range(NUM_S2):
     lines.append(f"actions2: {s2}   " + " ".join(str(a) for a in legal_a2[s2]) + " -1")
 
-# ---- O1: Monitor's passive, domain-dependent, audit-independent leak ----
-# depends only on s2 (round encodes domain) and a2 -- reuses P_CHEAP_CATCH
-# as the ambient detectability of a real, uncaught-by-design attack.
+# ---- O1: Monitor's passive, per-problem, audit-independent leak ----
+# depends only on s2 (round encodes problem) and a2 -- reuses the corrected
+# per-function catch probability as the ambient detectability of a real,
+# uncaught-by-design attack.
 O1 = {}
 for r in range(N_ROUNDS):
-    domain = DOMAIN_TYPES[r]
-    p_leak = P_CHEAP_CATCH[domain]
+    p_leak = cheap_catch_prob(r)
     s2_benign = s2_id(r, "Benign")
     s2_schemer = s2_id(r, "Schemer")
     for a2 in [0, 1]:
@@ -153,7 +169,6 @@ lines.extend(t2_lines)
 # ---- R: exact one-sided reward formula ----
 r_lines = []
 for r in range(N_ROUNDS):
-    domain = DOMAIN_TYPES[r]
     for b in BUDGETS:
         s1 = s1_id(r, b)
         s2_benign = s2_id(r, "Benign")
@@ -166,7 +181,7 @@ for r in range(N_ROUNDS):
                 r_lines.append(f"R: {s1} {s2_benign} {a1} {a2} {c}")
                 is_real_attack = (a2 == 1)
                 if is_real_attack:
-                    cp = catch_prob(a1_name, domain)
+                    cp = catch_prob(a1_name, r)
                     rr = c + (1 - cp) * C_CATASTROPHE
                 else:
                     rr = c
@@ -174,7 +189,10 @@ for r in range(N_ROUNDS):
 lines.extend(r_lines)
 
 content = "\n".join(lines) + "\n"
-with open("/tmp/twoside_full/toy_control_twosided.txt", "w") as f:
+import os
+out_path = "/sessions/sharp-wizardly-brahmagupta/mnt/twosided-posgs/games/toy_control_twosided.txt"
+os.makedirs(os.path.dirname(out_path), exist_ok=True)
+with open(out_path, "w") as f:
     f.write(content)
 
 print(f"Wrote {len(lines)} lines total.")

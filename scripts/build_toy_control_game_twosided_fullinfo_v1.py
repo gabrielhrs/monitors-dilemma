@@ -1,5 +1,5 @@
 """
-Full-info O2 variant of build_toy_control_game_twosided.py: the ONLY change
+Full-info O2 variant of build_toy_control_game_twosided_v1.py: the ONLY change
 is O2 (the Schemer's signal about the Monitor's own (s1,a1)), swapped from
 the noisy P_PARANOIA-gated signal to a deterministic one that reveals the
 Monitor's exact action every round. Reward structure, states, transitions,
@@ -9,8 +9,9 @@ noisy-vs-full-info value gap under its OWN original reward structure,
 without needing the toy's illustrative C_CATCH_BONUS retune.
 
 Because the game already has a Cheap action with a genuine partial catch
-probability (P_CHEAP_CATCH, strictly between 0 and 1 in bounded domains),
-there's real incentive tension there even without a catch bonus -- unlike
+probability (cheap_catch_prob(), strictly between 0 and 1 for fibonacci/
+is_prime/sum_of_digits), there's real incentive tension there even without
+a catch bonus -- unlike
 the 2-round toy, which only had Pass/Audit (Audit's catch_prob=1 makes
 catching and honesty reward-equivalent there, killing the tension). Whether
 that's enough to produce a genuine noisy-vs-full-info gap in the full game
@@ -22,26 +23,38 @@ post-hoc patch): the T1-generation loop already iterates
 dict means T1 only ever emits the one branch that survives -- no manual
 filtering needed.
 
-Run: python3 build_toy_control_game_twosided_fullinfo.py
+Run (from repo root): python3 scripts/build_toy_control_game_twosided_fullinfo_v1.py
 Writes: games/toy_control_twosided_fullinfo.txt (in the twosided-posgs repo)
 """
 import itertools
 from collections import defaultdict
 
-# ---- exact constants from build_toy_control_game.py (unchanged) ----
+# ---- exact constants from build_toy_control_game_v2.py -- CORRECTED
+# (Sept 2026): was the flat P_CHEAP_CATCH={"bounded":0.18,"unbounded":0.00}
+# model; replaced with the per-function k=5-probes/reachable-domain-size
+# model, matching the fix applied to build_toy_control_game_twosided_v1.py. ----
 P_SCHEMER_PRIOR = 0.25
-P_CHEAP_CATCH = {"bounded": 0.18, "unbounded": 0.00}
+PROBLEM_NAMES = ["find_maximum", "is_palindrome", "fibonacci", "reverse_string",
+                  "count_vowels", "is_prime", "sum_of_digits", "remove_duplicates"]
+REACHABLE_DOMAIN_SIZE = {
+    "find_maximum": None, "is_palindrome": None, "fibonacci": 30,
+    "reverse_string": None, "count_vowels": None, "is_prime": 46,
+    "sum_of_digits": 20000, "remove_duplicates": None,
+}
+K_PROBES = 5
 P_AUDIT_CATCH = 1.0
 C_PASS, C_CHEAP, C_AUDIT, C_CATASTROPHE = 0.0, -0.2, -1.0, -50.0
-DOMAIN_TYPES = ["unbounded", "unbounded", "bounded", "unbounded",
-                "unbounded", "bounded", "bounded", "unbounded"]
-N_ROUNDS = len(DOMAIN_TYPES)
+N_ROUNDS = len(PROBLEM_NAMES)
 BUDGETS = [0, 1, 2]
 GAMMA = 0.95
 TYPE_IDX = {"Schemer": 0, "Benign": 1}
 
-def catch_prob(a1, domain):
-    return {"Pass": 0.0, "Cheap": P_CHEAP_CATCH[domain], "Audit": P_AUDIT_CATCH}[a1]
+def cheap_catch_prob(round_i):
+    size = REACHABLE_DOMAIN_SIZE[PROBLEM_NAMES[round_i]]
+    return 0.0 if size is None else min(1.0, K_PROBES / size)
+
+def catch_prob(a1, round_i):
+    return {"Pass": 0.0, "Cheap": cheap_catch_prob(round_i), "Audit": P_AUDIT_CATCH}[a1]
 
 def cost(a1):
     return {"Pass": C_PASS, "Cheap": C_CHEAP, "Audit": C_AUDIT}[a1]
@@ -85,8 +98,7 @@ for s2 in range(NUM_S2):
 # ---- O1: unchanged from the noisy game ----
 O1 = {}
 for r in range(N_ROUNDS):
-    domain = DOMAIN_TYPES[r]
-    p_leak = P_CHEAP_CATCH[domain]
+    p_leak = cheap_catch_prob(r)
     s2_benign = s2_id(r, "Benign")
     s2_schemer = s2_id(r, "Schemer")
     for a2 in [0, 1]:
@@ -160,7 +172,6 @@ lines.extend(t2_lines)
 # ---- R: unchanged, exact one-sided reward formula ----
 r_lines = []
 for r in range(N_ROUNDS):
-    domain = DOMAIN_TYPES[r]
     for b in BUDGETS:
         s1 = s1_id(r, b)
         s2_benign = s2_id(r, "Benign")
@@ -172,7 +183,7 @@ for r in range(N_ROUNDS):
                 r_lines.append(f"R: {s1} {s2_benign} {a1} {a2} {c}")
                 is_real_attack = (a2 == 1)
                 if is_real_attack:
-                    cp = catch_prob(a1_name, domain)
+                    cp = catch_prob(a1_name, r)
                     rr = c + (1 - cp) * C_CATASTROPHE
                 else:
                     rr = c

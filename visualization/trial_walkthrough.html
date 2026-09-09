@@ -43,47 +43,54 @@
 </div>
 <div id="wrap">
   <h1>One HSVI trial, worked end to end</h1>
-  <p class="subtitle">Trial 5 (0-indexed iteration 4) from the actual solver run on the 3-action game --
-  games/hsvi_trace_fixed.jsonl, root partition 2, prior belief P(Schemer)=0.25.</p>
+  <p class="subtitle">Trial 5 (0-indexed iteration 4) from the actual solver run on the 3-action game,
+  root partition 2, prior belief P(Schemer)=0.25.</p>
 
   <p>This is one real trial pulled out of the interactive
   <a href="convergence_tree.html">convergence tree</a> and laid out as a straight line, because it's a
   clean illustration of the two things that make this whole approach work: a persistent belief that
   accumulates evidence across all 8 rounds, and a monitoring policy that gets to choose, round by
-  round, how hard to look.</p>
+  round, how hard to look. It's also a clean illustration of the division of labor between the two
+  checks: Audit is what actually resolves belief here, not Cheap.</p>
 
   <h2>The walk -- belief P(Schemer) after each round's check</h2>
   <div id="trial-path">
-    <span class="trial-chip"><span class="t-title">R1 find_maximum</span><br><span class="t-belief">b=2 P(S)=0.250</span></span><span class="trial-arrow">Audit/honest &rarr;</span><span class="trial-chip"><span class="t-title">R2 is_palindrome</span><br><span class="t-belief">b=1 P(S)=0.042</span></span><span class="trial-arrow">Pass/none &rarr;</span><span class="trial-chip"><span class="t-title">R3 fibonacci</span><br><span class="t-belief">b=1 P(S)=0.042</span></span><span class="trial-arrow">Cheap/clear &rarr;</span><span class="trial-chip"><span class="t-title">R4 reverse_string</span><br><span class="t-belief">b=1 P(S)=0.035</span></span><span class="trial-arrow">Pass/none &rarr;</span><span class="trial-chip"><span class="t-title">R5 count_vowels</span><br><span class="t-belief">b=1 P(S)=0.035</span></span><span class="trial-arrow">Pass/none &rarr;</span><span class="trial-chip"><span class="t-title">R6 is_prime</span><br><span class="t-belief">b=1 P(S)=0.035</span></span><span class="trial-arrow">Cheap/clear &rarr;</span><span class="trial-chip"><span class="t-title">R7 sum_of_digits</span><br><span class="t-belief">b=1 P(S)=0.030</span></span><span class="trial-arrow flag">Cheap/FLAG &rarr;</span><span class="trial-chip flagged"><span class="t-title">R8 remove_duplicates</span><br><span class="t-belief">b=1 P(S)=1.000</span></span>
+    <span class="trial-chip"><span class="t-title">R1 find_maximum</span><br><span class="t-belief">b=2 P(S)=0.250</span></span><span class="trial-arrow flag">Audit/ATTACK &rarr;</span><span class="trial-chip flagged"><span class="t-title">R2 is_palindrome</span><br><span class="t-belief">b=1 P(S)=1.000</span></span><span class="trial-arrow flag">Audit/ATTACK &rarr;</span><span class="trial-chip flagged"><span class="t-title">R3 fibonacci</span><br><span class="t-belief">b=0 P(S)=1.000</span></span><span class="trial-arrow">Cheap/clear &rarr;</span><span class="trial-chip flagged"><span class="t-title">R4 reverse_string</span><br><span class="t-belief">b=0 P(S)=1.000</span></span><span class="trial-arrow">Pass/none &rarr;</span><span class="trial-chip flagged"><span class="t-title">R5 count_vowels</span><br><span class="t-belief">b=0 P(S)=1.000</span></span>
   </div>
 
-  <p>Round 1 opens with an Audit -- expensive, but it always tells the truth. It comes back
-  "honest," and belief drops hard, from the 0.25 prior down to 0.042. Not to zero, though: the
-  solver's own worst-case adversary strategy allows a real Schemer to sometimes play Honest too,
-  so even a full Audit clearing someone doesn't mean certainty.</p>
+  <p>Round 1 opens with an Audit -- expensive, but it always tells the truth. This time it comes
+  back finding a real attack, and belief snaps straight from the 0.25 prior to 1.000.</p>
 
-  <p>Rounds 2 through 6 are quiet. Budget is down to 1, so the Monitor coasts on Pass and cheap
-  black-box probes -- free or nearly free, and each "clear" nudges belief down a little further,
-  from 0.042 to 0.030. Five rounds of nothing.</p>
+  <p>Round 2 audits again (budget allows one more) and confirms it: ATTACK again. From here on
+  nothing can move belief off certainty. Budget is now spent, so Round 3's Cheap check on
+  <code>fibonacci</code> comes back "clear" and Round 4's Pass reports nothing -- both are real
+  observations, but neither can undo what two Audits already established.</p>
 
-  <div class="callout warn">Round 7 breaks the pattern: a Cheap check on <code>sum_of_digits</code>
-  comes back FLAG. The measured false-positive rate for that check is exactly 0.000, so this one
-  weak, nearly-free signal is treated as fully diagnostic -- belief jumps straight from 0.030 to
-  1.000, overriding five rounds of accumulated "everything's fine."</div>
+  <div class="callout warn">Notice what's <i>missing</i> from this trial: a Cheap check ever coming
+  back FLAG. That's typical, not a coincidence of this one run -- Cheap's catch odds are k probes
+  divided by how much of the problem's input space the bug is actually reachable from, and for most
+  of these eight problems that's small: fibonacci 16.7%, is_prime 10.9%, sum_of_digits 0.025% (its
+  domain is 20,000 possible inputs), and effectively 0% for the rest, whose bugs aren't confined to
+  any small, checkable range at all. A signal that weak rarely produces a dramatic "gotcha" -- Audit,
+  which always tells the truth, is what actually does the detection work in this game. Cheap is
+  better understood as a small, mostly-uninformative nudge that's cheap enough to be worth running
+  anyway.</div>
 
-  <p>That's the point of carrying belief as a persistent, single running number across the whole
-  session instead of resetting it each round: a Schemer that behaves for six rounds and slips up
-  once on the seventh doesn't get a clean record averaged over their good behavior -- one hard
-  signal at the end still fully re-classifies them, because the game is still using everything
-  it's seen from round 1 onward.</p>
+  <p>That's still the point of carrying belief as a persistent, single running number across the
+  whole session instead of resetting it each round -- Audit, not a lucky Cheap flag, is what actually
+  supplies hard evidence in this game. Once two independent Audits agree, the belief stays pinned at
+  1.000 for every remaining round in the trial, because the game is still using everything it's seen
+  from round 1 onward.</p>
 
   <h2>What this trial's backup did to the root's own bounds</h2>
   <p>Before this trial, the value function's estimate of the whole 8-round game (at the root's
-  belief 0.25) sat in <code>[-56.859, -55.824]</code> -- a width of 1.035, still fairly uncertain.
-  This trial's forward walk (the peek phase, above) picked a promising, cheap-heavy path to test;
-  its backward pass then propagated the new information about that path all the way back up to
-  the root, narrowing the estimate to <code>[-56.812, -56.220]</code> -- a width of 0.592. One
-  trial cut the remaining uncertainty at the root by 43%.</p>
+  belief 0.25) sat in <code>[-59.810, -58.325]</code> -- a width of 1.485, still fairly uncertain.
+  This trial's forward walk (the peek phase, above) picked a path that runs straight into a
+  double-Audit-confirmed attack; its backward pass then propagated that new information about the
+  path's worst case all the way back up to the root, narrowing the estimate to
+  <code>[-59.279, -58.325]</code> -- a width of 0.954. One trial cut the remaining uncertainty at
+  the root by 36% -- entirely by tightening the lower bound; the upper bound didn't move this
+  time.</p>
 
   <div id="trial-bounds">
     <svg id="trial-bounds-svg" viewBox="0 0 640 88"></svg>
@@ -93,15 +100,15 @@
   precision. Pick one promising trajectory, walk it forward, then let a single backward pass
   tighten the bounds everywhere along that path -- including, most importantly, back at the root,
   which is the only number that actually decides how the game is being played right now. Repeat a
-  few dozen times (29, for this game) and the root's own gap between lower and upper bound shrinks
-  from 9.65 down to 0.049 -- see the <a href="convergence_tree.html">full convergence tree</a> for
+  few dozen times (31, for this game) and the root's own gap between lower and upper bound shrinks
+  from 8.27 down to 0.041 -- see the <a href="convergence_tree.html">full convergence tree</a> for
   the entire run.</p>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
 <script>
-const before = { lb: -56.859, ub: -55.8237 };
-const after = { lb: -56.8119, ub: -56.2201 };
+const before = { lb: -59.8103, ub: -58.3254 };
+const after = { lb: -59.2791, ub: -58.3254 };
 
 const trialBoundsSvg = d3.select("#trial-bounds-svg");
 const w = 640, barH = 18, padL = 138, padR = 26;

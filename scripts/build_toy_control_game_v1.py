@@ -46,8 +46,8 @@ where the solver chooses it as belief rises) can be read off with the same
 policy-reconstruction tooling (visualization/policy_reconstruction.html)
 already built for Pass/Cheap/Audit, no new machinery needed.
 
-Run: python3 build_toy_control_game.py > games/toy_control_game.posg
-Run with a different Defer cost: python3 build_toy_control_game.py --c-defer -5.0 > games/toy_control_game_defer5.posg
+Run (from repo root): python3 scripts/build_toy_control_game_v1.py > games/toy_control_game.posg
+Run with a different Defer cost (from repo root): python3 scripts/build_toy_control_game_v1.py --c-defer -5.0 > games/toy_control_game_defer5.posg
 """
 
 import argparse

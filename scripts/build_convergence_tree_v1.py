@@ -16,7 +16,7 @@ order, two records each. This lets us track depth exactly with a simple
 pointer instead of a naive call-stack simulation (which mis-attributes the
 unwind, since the trace has no explicit "return" marker).
 
-Run: python3 build_convergence_tree.py [trace_file] > games/convergence_tree.json
+Run (from repo root): python3 scripts/build_convergence_tree_v1.py [trace_file] > games/convergence_tree.json
 """
 import json
 import sys

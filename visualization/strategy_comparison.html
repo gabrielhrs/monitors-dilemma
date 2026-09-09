@@ -53,67 +53,96 @@
   <h1>Fixed schedule vs. two real belief-adaptive trials</h1>
   <div id="instructions">
     The top row is the best possible <i>fixed</i> (non-adaptive, committed-in-advance) audit schedule
-    from <code>naive_baseline.py</code>. The two rows below are two actual trials from the real
-    solved game (<code>games/convergence_tree.json</code>) -- same 8 rounds, same rules, but the
-    Monitor's action reacts to its belief as it updates. Rounds boxed in yellow are where the
-    adaptive policy's action differs from what the fixed schedule commits to regardless. Dashed
-    boxes are extrapolated past the 6 iterations actually run (reasoned from the same catch-probability
-    logic established elsewhere in this project), not directly observed in the trace.
+    from <code>scripts/naive_baseline_v2.py</code>. The two rows below are two actual trials from the real
+    solved game -- same 8 rounds, same rules, but the Monitor's action reacts to its belief as it
+    updates. Rounds boxed in yellow are where the adaptive policy's action differs from what the
+    fixed schedule commits to regardless. Dashed boxes are extrapolated past the 5 rounds each trial
+    actually reached before its trace ends, using the fully-solved belief-to-action policy at that
+    exact (round, budget, belief) point (see
+    <a href="policy_reconstruction.html">Reconstructed policy</a>) rather than general reasoning --
+    not directly observed in this specific trial's trace, but read off the real solved policy all
+    the same.
   </div>
   <div class="legend">
     <span><span class="sw" style="background:#45475a"></span>Pass</span>
     <span><span class="sw" style="background:#1e3a5f"></span>Cheap</span>
     <span><span class="sw" style="background:#3a2a52"></span>Audit</span>
-    <span><span class="sw" style="background:#fab387"></span>unbounded domain</span>
-    <span><span class="sw" style="background:#a6e3a1"></span>bounded domain</span>
-    <span><span class="sw" style="background:#f9e2af"></span>differs from fixed schedule</span>
+    <span><span class="sw" style="background:#a6e3a1"></span>Cheap catches &gt;5% (fibonacci, is_prime)</span>
+    <span><span class="sw" style="background:#f9e2af"></span>Cheap catches, but under 5% (sum_of_digits)</span>
+    <span><span class="sw" style="background:#fab387"></span>Cheap catches 0%</span>
+    <span><span class="sw" style="border:2px solid #f9e2af"></span>cell border: differs from fixed schedule</span>
   </div>
 
   <div class="grid" id="grid"></div>
   <div class="caption">
     <b>Confirmed Schemer early:</b> R1's audit reveals a real attack, so the Monitor keeps its
     second audit for R2 rather than the fixed schedule's habit of just repeating the same plan --
-    here that happens to match anyway. The real divergence shows up at R4, R5 and R8: with belief
-    now at 1.0 and no audit budget left, Cheap gives literally 0% protection on these unbounded-domain
-    rounds (measured directly from the elicitation data), so paying its -0.2 cost buys nothing -- the
-    adaptive policy passes for free instead of wasting it, something a schedule fixed in advance
-    has no way to know it's safe to do.
+    here that happens to match anyway. Both audits are now spent and belief is pinned at 1.0, but
+    the remaining rounds aren't all treated alike: R4 (reverse_string) and R5 (count_vowels) are
+    unbounded, so Cheap's catch odds are exactly 0% there and the adaptive policy passes for free
+    instead of paying -0.2 for nothing. R6 (is_prime) is bounded with real 10.9% catch odds, so the
+    policy still spends the Cheap check there. R7 (sum_of_digits) is technically "bounded" too, but
+    its reachable-domain catch odds are only 0.025% -- close enough to zero that the policy treats it
+    exactly like an unbounded round and passes. R8 (remove_duplicates) is unbounded and
+    passes as expected. That's the real divergence from the fixed schedule (which just keeps paying
+    for Cheap regardless): a schedule fixed in advance has no way to know, per problem, which of
+    these checks is actually worth its cost.
   </div>
   <div class="caption">
-    <b>Reassured early, flagged late:</b> R1's audit comes back <i>honest</i>, and belief drops
-    from 0.25 to 0.044 -- but not to exactly zero (the solver's own worst-case adversary strategy
-    allows a Schemer to sometimes stay honest, see the write-up). Because of that, the Monitor still
-    keeps cheap-checking bounded-domain rounds rather than assuming total safety. That vigilance pays
-    off at R7: belief enters that round at just 0.030, a Cheap-check there flags a real attack, and
-    belief jumps to 1.0 entering R8 -- reversing six rounds of accumulated reassurance in a single
-    observation. A fixed schedule, having already spent both its audits on R1 and R2, has no budget
-    and no mechanism left to
-    react to this at all.
+    <b>Reassured early, confirmed late:</b> R1 is a free Pass; R2's audit comes back <i>honest</i>,
+    and belief drops from 0.25 to 0.041 -- but not to exactly zero (the solver's own worst-case
+    adversary strategy allows a Schemer to sometimes stay honest, see the write-up). Rather than
+    spend its second audit right away, the adaptive policy holds it back: R3 is a Cheap check on
+    fibonacci (16.7% catch odds) that comes back clear, nudging belief down further to 0.035. That
+    held-back audit pays off at R4: it reveals a real attack, and belief jumps straight from 0.035
+    to 1.0 entering R5 -- reversing three rounds of accumulated reassurance in one hard signal. A
+    fixed schedule, having already spent both its audits on R1 and R2, has no budget and no
+    mechanism left to react to this at all. Worth noting: a Cheap check essentially never comes back
+    FLAG in this game -- catch odds are small enough (see the note on strategy above) that the
+    solver's own exploration rarely finds that branch worth walking. Audit, not a lucky Cheap flag,
+    is what supplies decisive signal here (see <a href="trial_walkthrough.html">the worked trial</a>
+    for the same point in more detail).
   </div>
 </div>
 
 <script>
 const PROBLEMS = ["find_maximum", "is_palindrome", "fibonacci", "reverse_string",
                   "count_vowels", "is_prime", "sum_of_digits", "remove_duplicates"];
-const DOMAINS = ["unbounded", "unbounded", "bounded", "unbounded",
-                 "unbounded", "bounded", "bounded", "unbounded"];
-const DOMAIN_COL = { bounded: "#a6e3a1", unbounded: "#fab387" };
+// Graduated by actual Cheap-check catch odds (k probes / reachable domain size),
+// not a flat bounded/unbounded binary -- matches monitors_dilemma.html's coloring.
+const REACHABLE_DOMAIN_SIZE = {
+  find_maximum: null, is_palindrome: null, fibonacci: 30, reverse_string: null,
+  count_vowels: null, is_prime: 46, sum_of_digits: 20000, remove_duplicates: null,
+};
+const K_PROBES = 5;
+function cheapCatchProb(problem) {
+  const size = REACHABLE_DOMAIN_SIZE[problem];
+  return size === null ? 0.0 : Math.min(1.0, K_PROBES / size);
+}
+function domainCol(problem) {
+  const cp = cheapCatchProb(problem);
+  return cp > 0.05 ? "#a6e3a1" : cp > 0 ? "#f9e2af" : "#fab387";
+}
 
 const FIXED = ["Audit", "Audit", "Cheap", "Cheap", "Cheap", "Cheap", "Cheap", "Cheap"];
 
-// Real trial data from games/convergence_tree.json (rootKey and its 1st / 4th children).
-// belief[i] is P(Schemer) entering round i, i.e. before that round's action.
+// Real trial data from games/convergence_tree_corrected_nodefer.json (trials at iter=4 and
+// iter=25 of the corrected 31-trial solver run). belief[i] is P(Schemer) entering round i, i.e.
+// before that round's action. Both trials' traces end after 5 rounds (the solver's own trial
+// heuristic stopped extending there); rounds 5-7 are extrapolated from the fully-solved corrected
+// policy at that exact (round, budget=0, belief=1.0) point -- see policy_reconstruction.html
+// partitions 15/18/21 -- not from further trace data.
 const PATH_A = {
   label: "Adaptive: confirmed Schemer early",
-  actions:      ["Audit", "Audit", "Cheap", "Pass", "Pass", "Cheap", "Cheap", "Pass"],
-  belief:       [0.25,    1.0,     1.0,     1.0,    1.0,    1.0,     1.0,     1.0],
-  extrapolated: [false,   false,   false,   false,  false,  false,   true,    true],
+  actions:      ["Audit", "Audit", "Cheap", "Pass", "Pass", "Cheap", "Pass", "Pass"],
+  belief:       [0.25,    1.0,     1.0,     1.0,    1.0,    1.0,     1.0,    1.0],
+  extrapolated: [false,   false,   false,   false,  false,  true,    true,   true],
 };
 const PATH_B = {
-  label: "Adaptive: reassured, then flagged late",
-  actions:      ["Audit", "Pass", "Cheap",  "Pass",   "Pass",   "Cheap",  "Cheap", "Audit"],
-  belief:       [0.25,    0.0439, 0.0439,   0.0363,   0.0363,   0.0363,   0.0301,  1.0],
-  extrapolated: [false,   false,  false,    false,    false,    false,    false,   true],
+  label: "Adaptive: reassured early, confirmed late",
+  actions:      ["Pass",  "Audit", "Cheap",  "Audit",  "Pass",   "Cheap",  "Pass", "Pass"],
+  belief:       [0.25,    0.25,    0.0411,   0.0345,   1.0,      1.0,      1.0,    1.0],
+  extrapolated: [false,   false,   false,    false,    false,    true,     true,   true],
 };
 
 const grid = document.getElementById("grid");
@@ -130,7 +159,7 @@ function addRow(rowLabel, sub, actions, beliefs, extrap, isFixed) {
     cell.className = "cell" + (differs ? " diff" : "") + (extrap && extrap[i] ? " extrapolated" : "");
     const strip = document.createElement("div");
     strip.className = "strip";
-    strip.style.background = DOMAIN_COL[DOMAINS[i]];
+    strip.style.background = domainCol(PROBLEMS[i]);
     cell.appendChild(strip);
 
     const action = document.createElement("div");
@@ -171,7 +200,7 @@ for (let i = 0; i < 8; i++) {
   grid.appendChild(h);
 }
 
-addRow("Best fixed schedule", "(naive_baseline.py)", FIXED, null, null, true);
+addRow("Best fixed schedule", "(scripts/naive_baseline_v2.py)", FIXED, null, null, true);
 addRow(PATH_A.label, null, PATH_A.actions, PATH_A.belief, PATH_A.extrapolated, false);
 addRow(PATH_B.label, null, PATH_B.actions, PATH_B.belief, PATH_B.extrapolated, false);
 

@@ -3,20 +3,20 @@ Decomposes the solver's single blended reward into two separately-tracked
 quantities -- expected discounted usefulness cost, and expected discounted
 "missed real attack" probability mass -- for four benchmark policies:
 
-  no_audits        -- naive_baseline.py's all-Cheap schedule
-  worst_fixed       -- naive_baseline.py's worst fixed 2-audit schedule
-  best_fixed        -- naive_baseline.py's best fixed 2-audit schedule
+  no_audits        -- naive_baseline_v1.py's all-Cheap schedule
+  worst_fixed       -- naive_baseline_v1.py's worst fixed 2-audit schedule
+  best_fixed        -- naive_baseline_v1.py's best fixed 2-audit schedule
   solved_adaptive   -- the actual solved POSG policy, reconstructed by
                         walking the game tree under the exported Monitor
                         policy sweep (games/policy_sweep_fixed.json) and
                         attacker policy sweep (games/attacker_sweep_fixed.json)
 
 For the fixed schedules this is a closed form (same math as
-naive_baseline.py's schedule_value(), split into its two summands). For the
+naive_baseline_v1.py's schedule_value(), split into its two summands). For the
 solved adaptive policy there's no closed form -- this recurses over
 (round, budget, belief), using nearest-neighbor lookup into the two 0.01-
 resolution belief sweeps to get the Monitor's mixed action and the Schemer's
-worst-case P(Attack) at each node, and replicates build_toy_control_game.py's
+worst-case P(Attack) at each node, and replicates build_toy_control_game_v1.py's
 exact observation/catch-probability logic to branch into next beliefs via
 Bayes' rule -- the same math Partition::getObservationProbability /
 getTransformedBelief use in the real C++ solver.
@@ -35,7 +35,7 @@ just the expected cost of reconstructing continuous recursion from a
 discretized sweep instead of reading the solver's own alpha-vectors
 directly.
 
-Run: python3 build_safety_usefulness.py
+Run (from repo root): python3 scripts/build_safety_usefulness_v1.py
 Writes: games/safety_usefulness.json
 """
 import json
@@ -65,7 +65,7 @@ def cost(a1):
 
 def schedule_decompose(audit_rounds):
     """Closed-form (usefulness, safety, blended) for a fixed, non-reactive
-    2-audit schedule, matching naive_baseline.py's schedule_value()."""
+    2-audit schedule, matching naive_baseline_v1.py's schedule_value()."""
     usefulness, safety, blended = 0.0, 0.0, 0.0
     for i in range(N_ROUNDS):
         a1 = "Audit" if i in audit_rounds else "Cheap"

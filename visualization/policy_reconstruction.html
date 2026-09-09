@@ -78,47 +78,43 @@
   </div>
 
   <div class="caption">
-    <b>Caveat first, updated:</b> an earlier version of this page ran only 6 HSVI iterations and
-    quoted a 0.46 threshold at the root -- that number turned out to be real but badly imprecise. A
-    bug was found and fixed (a convergence-goal constant inside the solver was silently
-    capping every solve at a bound-gap of 1.0, regardless of the precision requested on the
-    command line), and this page now reflects a genuinely tightened solve: 29 iterations, gap under
-    0.05. 8 of the 24 partitions were untrained at 6 iterations; re-solving with the fix trained 4 of
-    those, leaving 4 still hatched below. Two of those (round 1 at budget 0, round 2 at budget 0) are
-    structurally unreachable from the actual starting budget of 2, so there's nothing to train --
-    HSVI is a targeted search, not exhaustive dynamic programming, and correctly has no reason to
-    visit belief points that can never occur. The other two are more likely genuinely under-explored
-    still.
+    <b>Two hatched cells, explained:</b> partitions at round 1 / budget 0 and round 2 / budget 0
+    (below) are structurally unreachable from the actual starting budget of 2 -- reaching budget 0
+    that early would mean spending both audits before round 1 even starts, which the game's rules
+    don't allow. HSVI is a targeted search, not exhaustive dynamic programming, so it correctly
+    never visits belief points that can't occur, and those two partitions show up hatched below
+    rather than as a real (if untrained) policy.
   </div>
 
   <h2>Round x audit-budget grid</h2>
   <div class="grid" id="grid"></div>
 
   <div class="caption">
-    <b>An emergent threshold, not a designed one -- now more precisely located:</b> partition 2,
-    round 1 at full budget, is the root of the whole game. Its policy is a mostly-Audit mix for
-    belief up to about <b>0.70</b>, then flips to deterministic Audit above that -- a real threshold,
-    just further out than the earlier imprecise solve suggested. Partition 4 (round 2, budget 1,
-    reached right after an early audit) shows the same shape with its own threshold around
-    <b>0.24</b>; partition 10 (round 4, budget 1) shows it again around <b>0.29</b>, essentially
-    unchanged from before. The budget-0 partitions (6, 15, 18 -- no audits left to spend) show a much
-    lower Pass&rarr;Cheap threshold, now consistently around belief <b>0.03</b>. None of these
-    thresholds were designed in -- they fell out of solving the game, and held up (with corrected
-    locations) under tighter convergence.
+    <b>An emergent threshold, not a designed one:</b> partition 2, round 1 at full budget, is the
+    root of the whole game. Its policy is a mostly-Audit mix for belief up to about <b>0.89</b>,
+    then flips to deterministic Audit above that. Partition 4 (round 2, budget 1) shows the same
+    shape with its own threshold at <b>0.30</b>; partition 10 (round 4, budget 1) flips at
+    <b>0.38</b>. The budget-0 partitions don't all move together: fibonacci (partition 6, catch
+    odds 16.7%) flips Pass&rarr;Cheap early, at belief <b>0.04</b>; is_prime (partition 15, catch
+    odds 10.9%) flips a little later, at <b>0.06</b>; but sum_of_digits (partition 18, catch odds
+    0.025%) never flips at all -- <i>Pass wins at every belief from 0 to 1</i>. Spending -0.2 for a
+    real-world catch chance under 0.03% simply never pays for itself, no matter how certain the
+    Monitor is that it's facing a Schemer. None of these thresholds were designed in -- they fell
+    out of solving the game.
   </div>
 
   <div class="caption">
-    <b>What tighter convergence actually caught:</b> partition 16 (round 6, budget 1) didn't just
-    move its threshold -- it flipped which action wins outright. The imprecise solve had it settling
-    on deterministic <i>Audit</i> above belief 0.14; the tightened solve instead settles on
-    deterministic <i>Cheap</i> above belief 0.07, with Audit's weight dropping to zero. That's a
-    plausible, rational reversal rather than noise: round 6 is bounded-domain, where Cheap gives real
-    (18%) protection, but round 8 two rounds later is unbounded, where Cheap gives none at all and
-    Audit is the only thing that works. With only one audit left at this point, it's better to spend
-    it protecting the round where nothing else can help, and accept Cheap's partial protection here
-    where it can. The looser solve hadn't yet worked that trade-off out; the tighter one has. It's a
-    reminder that "an emergent threshold" and "the right threshold" aren't the same claim -- the first
-    one was visible even at 6 iterations, but trusting the second needed the fix.
+    <b>Where the scarce audit actually goes:</b> partition 16 (round 6 = is_prime, budget 1)
+    settles on Pass for belief up to 0.04, then deterministic <i>Cheap</i> from 0.05 up to 1.0 --
+    Audit doesn't appear in this partition's policy at all. That's because is_prime's real catch
+    odds (10.9%, since only primes under 200 actually reach the modified branch) make Cheap alone
+    good enough here, freeing up the single remaining audit for a round where Cheap does nothing at
+    all. That's exactly what happens two rounds later: partition 19 (round 7 = sum_of_digits,
+    budget 1) flips straight from Pass to deterministic <i>Audit</i> at belief 0.06, with no Cheap
+    segment in its policy whatsoever -- consistent with sum_of_digits' 0.025% Cheap catch odds being
+    useless regardless of belief. is_prime's real domain (46 reachable primes) makes it only
+    modestly better than Cheap-blind problems, so the policy reallocates its scarce audit toward the
+    round where Cheap truly can't help at all.
   </div>
 </div>
 
@@ -130,10 +126,12 @@ const ACTION_RGB = [[108,112,134],[137,180,250],[203,166,247]]; // #6c7086 #89b4
 const BUDGETS = [2, 1, 0]; // full -> spent, left to right
 
 // Compressed sweep data: for each partition id, the runs of (nearly-)constant
-// mixed strategy across the belief sweep, from games/policy_sweep.json
-// (produced by a policy-sweep export routine in the solver driver). Format per partition:
+// mixed strategy across the belief sweep, from games/policy_sweep_corrected_nodefer.json
+// (produced by a policy-sweep export routine in the solver driver, using the corrected
+// per-function Cheap-check catch probabilities -- k probes / reachable domain size, not
+// the old flat bounded=0.18/unbounded=0.00 model). Format per partition:
 // { actions: [global action indices], nVectors, runs: [[beliefStart, [p_a0,p_a1,...], beliefEnd], ...] }
-const DATA = {"0":{"actions":[0,1],"nVectors":1,"runs":[[0,[0.5,0.5],1]]},"1":{"actions":[0,1,2],"nVectors":1,"runs":[[0,[0.3333,0.3333,0.3333],1]]},"2":{"actions":[0,1,2],"nVectors":2,"runs":[[0,[0.0319,0,0.9681],0.69],[0.7,[0,0,1],1]]},"3":{"actions":[0,1],"nVectors":1,"runs":[[0,[0.5,0.5],1]]},"4":{"actions":[0,1,2],"nVectors":2,"runs":[[0,[0.3081,0,0.6919],0.23],[0.24,[0,0,1],1]]},"5":{"actions":[0,1,2],"nVectors":3,"runs":[[0,[0.3333,0.3333,0.3333],0],[0.01,[0.0164,0,0.9836],0.77],[0.78,[0,0,1],1]]},"6":{"actions":[0,1],"nVectors":2,"runs":[[0,[1,0],0.02],[0.03,[0,1],1]]},"7":{"actions":[0,1,2],"nVectors":3,"runs":[[0,[0,1,0],1]]},"8":{"actions":[0,1,2],"nVectors":3,"runs":[[0,[0.3333,0.3333,0.3333],0],[0.01,[0,1,0],1]]},"9":{"actions":[0,1],"nVectors":2,"runs":[[0,[1,0],1]]},"10":{"actions":[0,1,2],"nVectors":3,"runs":[[0,[0.2355,0,0.7645],0.27],[0.28,[0.1898,0,0.8102],0.28],[0.29,[0,0,1],1]]},"11":{"actions":[0,1,2],"nVectors":3,"runs":[[0,[0.3333,0.3333,0.3333],0],[0.01,[0.0451,0,0.9549],0.46],[0.47,[0.0253,0,0.9747],1]]},"12":{"actions":[0,1],"nVectors":2,"runs":[[0,[1,0],1]]},"13":{"actions":[0,1,2],"nVectors":3,"runs":[[0,[0.2449,0,0.7551],0.13],[0.14,[0.2459,0,0.7541],0.16],[0.17,[0.0,0,1],1]]},"14":{"actions":[0,1,2],"nVectors":2,"runs":[[0,[0.3333,0.3333,0.3333],0.01],[0.02,[0,0,1],1]]},"15":{"actions":[0,1],"nVectors":2,"runs":[[0,[1,0],0.02],[0.03,[0,1],1]]},"16":{"actions":[0,1,2],"nVectors":3,"runs":[[0,[0.3333,0.3333,0.3333],0],[0.01,[0,0.1694,0.8306],0.06],[0.07,[0,1,0],1]]},"17":{"actions":[0,1,2],"nVectors":3,"runs":[[0,[0.3333,0.3333,0.3333],0.01],[0.02,[0,0.3743,0.6257],0.27],[0.28,[0,0,1],1]]},"18":{"actions":[0,1],"nVectors":2,"runs":[[0,[1,0],0.02],[0.03,[0,1],1]]},"19":{"actions":[0,1,2],"nVectors":2,"runs":[[0,[0.3333,0.3333,0.3333],0.01],[0.02,[0,1,0],1]]},"20":{"actions":[0,1,2],"nVectors":2,"runs":[[0,[0.3333,0.3333,0.3333],0.01],[0.02,[0,0,1],1]]},"21":{"actions":[0,1],"nVectors":1,"runs":[[0,[1,0],1]]},"22":{"actions":[0,1,2],"nVectors":2,"runs":[[0,[0.3333,0.3333,0.3333],0.01],[0.02,[0,0,1],1]]},"23":{"actions":[0,1,2],"nVectors":1,"runs":[[0,[0.3333,0.3333,0.3333],1]]}};
+const DATA = {"0":{"actions":[0,1],"nVectors":1,"runs":[[0,[0.5,0.5],1]]},"1":{"actions":[0,1,2],"nVectors":1,"runs":[[0,[0.3333,0.3333,0.3333],1]]},"2":{"actions":[0,1,2],"nVectors":2,"runs":[[0,[0.0181,0,0.9819],0.88],[0.89,[0,0,1],1]]},"3":{"actions":[0,1],"nVectors":1,"runs":[[0,[0.5,0.5],1]]},"4":{"actions":[0,1,2],"nVectors":1,"runs":[[0,[0.1925,0,0.8075],0.29],[0.3,[0,0,1],1]]},"5":{"actions":[0,1,2],"nVectors":2,"runs":[[0,[0.3333,0.3333,0.3333],0],[0.01,[0.0052,0,0.9948],1]]},"6":{"actions":[0,1],"nVectors":1,"runs":[[0,[1,0],0.03],[0.04,[0,1],1]]},"7":{"actions":[0,1,2],"nVectors":2,"runs":[[0,[0,1,0],1]]},"8":{"actions":[0,1,2],"nVectors":3,"runs":[[0,[0.3333,0.3333,0.3333],0],[0.01,[0,1,0],1]]},"9":{"actions":[0,1],"nVectors":2,"runs":[[0,[1,0],1]]},"10":{"actions":[0,1,2],"nVectors":2,"runs":[[0,[0.0863,0,0.9137],0.37],[0.38,[0,0,1],1]]},"11":{"actions":[0,1,2],"nVectors":3,"runs":[[0,[0.3333,0.3333,0.3333],0],[0.01,[0.1802,0,0.8198],0.14],[0.15,[0.0155,0,0.9845],0.62],[0.63,[0,0,1],1]]},"12":{"actions":[0,1],"nVectors":1,"runs":[[0,[1,0],1]]},"13":{"actions":[0,1,2],"nVectors":3,"runs":[[0,[1,0,0],0.01],[0.02,[0.089,0,0.911],0.19],[0.2,[0.0474,0,0.9526],1]]},"14":{"actions":[0,1,2],"nVectors":3,"runs":[[0,[0.3333,0.3333,0.3333],0.01],[0.02,[0.1243,0,0.8757],0.29],[0.3,[0,0,1],1]]},"15":{"actions":[0,1],"nVectors":2,"runs":[[0,[1,0],0.05],[0.06,[0,1],1]]},"16":{"actions":[0,1,2],"nVectors":3,"runs":[[0,[0.3333,0.3333,0.3333],0],[0.01,[1,0,0],0.04],[0.05,[0,1,0],1]]},"17":{"actions":[0,1,2],"nVectors":2,"runs":[[0,[0.3333,0.3333,0.3333],0],[0.01,[0,0.5104,0.4896],1]]},"18":{"actions":[0,1],"nVectors":1,"runs":[[0,[1,0],1]]},"19":{"actions":[0,1,2],"nVectors":3,"runs":[[0,[1,0,0],0.05],[0.06,[0,0,1],1]]},"20":{"actions":[0,1,2],"nVectors":2,"runs":[[0,[0.3333,0.3333,0.3333],0.01],[0.02,[0,0,1],1]]},"21":{"actions":[0,1],"nVectors":1,"runs":[[0,[1,0],1]]},"22":{"actions":[0,1,2],"nVectors":1,"runs":[[0,[1,0,0],0.02],[0.03,[0,0,1],1]]},"23":{"actions":[0,1,2],"nVectors":1,"runs":[[0,[0.3333,0.3333,0.3333],1]]}};
 
 function blend(actions, probs) {
   let r=0,g=0,b=0;

@@ -17,28 +17,41 @@ Writes BOTH the noisy and full-info O2 variants (only O2/T1 differ between
 them, everything else -- including this new reward formula -- is identical),
 so the same before/after comparison the toy used can be run here too.
 
-Run: python3 build_toy_control_game_twosided_retuned.py
+Run (from repo root): python3 scripts/build_toy_control_game_twosided_retuned_v1.py
 Writes: games/toy_control_twosided_retuned.txt (noisy O2)
         games/toy_control_twosided_retuned_fullinfo.txt (full-info O2)
 """
 import os
 
-# ---- exact constants from build_toy_control_game.py, except the new bonus ----
+# ---- exact constants from build_toy_control_game_v2.py, except the
+# new bonus -- CORRECTED (Sept 2026): was the flat
+# P_CHEAP_CATCH={"bounded":0.18,"unbounded":0.00} model; replaced with the
+# per-function k=5-probes/reachable-domain-size model, matching the fix
+# applied to build_toy_control_game_twosided_v1.py. ----
 P_SCHEMER_PRIOR = 0.25
-P_CHEAP_CATCH = {"bounded": 0.18, "unbounded": 0.00}
+PROBLEM_NAMES = ["find_maximum", "is_palindrome", "fibonacci", "reverse_string",
+                  "count_vowels", "is_prime", "sum_of_digits", "remove_duplicates"]
+REACHABLE_DOMAIN_SIZE = {
+    "find_maximum": None, "is_palindrome": None, "fibonacci": 30,
+    "reverse_string": None, "count_vowels": None, "is_prime": 46,
+    "sum_of_digits": 20000, "remove_duplicates": None,
+}
+K_PROBES = 5
 P_AUDIT_CATCH = 1.0
 C_PASS, C_CHEAP, C_AUDIT, C_CATASTROPHE = 0.0, -0.2, -1.0, -50.0
 C_CATCH_BONUS = 10.0   # 0.2 * |C_CATASTROPHE|, same ratio the toy used
-DOMAIN_TYPES = ["unbounded", "unbounded", "bounded", "unbounded",
-                "unbounded", "bounded", "bounded", "unbounded"]
-N_ROUNDS = len(DOMAIN_TYPES)
+N_ROUNDS = len(PROBLEM_NAMES)
 BUDGETS = [0, 1, 2]
 GAMMA = 0.95
 TYPE_IDX = {"Schemer": 0, "Benign": 1}
 P_PARANOIA = {"Pass": 0.1, "Cheap": 0.3, "Audit": 0.8}
 
-def catch_prob(a1, domain):
-    return {"Pass": 0.0, "Cheap": P_CHEAP_CATCH[domain], "Audit": P_AUDIT_CATCH}[a1]
+def cheap_catch_prob(round_i):
+    size = REACHABLE_DOMAIN_SIZE[PROBLEM_NAMES[round_i]]
+    return 0.0 if size is None else min(1.0, K_PROBES / size)
+
+def catch_prob(a1, round_i):
+    return {"Pass": 0.0, "Cheap": cheap_catch_prob(round_i), "Audit": P_AUDIT_CATCH}[a1]
 
 def cost(a1):
     return {"Pass": C_PASS, "Cheap": C_CHEAP, "Audit": C_AUDIT}[a1]
@@ -68,8 +81,7 @@ legal_a2[TERMINAL_S2] = [0]
 
 O1 = {}
 for r in range(N_ROUNDS):
-    domain = DOMAIN_TYPES[r]
-    p_leak = P_CHEAP_CATCH[domain]
+    p_leak = cheap_catch_prob(r)
     s2_benign = s2_id(r, "Benign")
     s2_schemer = s2_id(r, "Schemer")
     for a2 in [0, 1]:
@@ -149,7 +161,6 @@ def build(fullinfo, out_path):
 
     r_lines = []
     for r in range(N_ROUNDS):
-        domain = DOMAIN_TYPES[r]
         for b in BUDGETS:
             s1 = s1_id(r, b)
             s2_benign = s2_id(r, "Benign")
@@ -161,7 +172,7 @@ def build(fullinfo, out_path):
                     r_lines.append(f"R: {s1} {s2_benign} {a1} {a2} {c}")
                     is_real_attack = (a2 == 1)
                     if is_real_attack:
-                        cp = catch_prob(a1_name, domain)
+                        cp = catch_prob(a1_name, r)
                         rr = c + cp * C_CATCH_BONUS + (1 - cp) * C_CATASTROPHE
                     else:
                         rr = c
